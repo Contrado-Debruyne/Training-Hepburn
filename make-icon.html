@@ -1,0 +1,49 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Icon maker</title>
+<style>
+body{background:#0E1116;color:#EDEFF3;font-family:-apple-system,sans-serif;
+  max-width:430px;margin:0 auto;padding:28px 20px;text-align:center}
+h1{font-size:24px;text-transform:uppercase;letter-spacing:1px}
+p{color:#8A93A3;font-size:14px;line-height:1.5}
+.pick{display:inline-block;background:#FF7A45;color:#14100C;border:none;border-radius:12px;
+  padding:14px 24px;font-size:16px;font-weight:700;cursor:pointer;margin:16px 0}
+input[type=file]{display:none}
+canvas{border-radius:22%;border:1px solid #2A3340;margin:16px 8px;max-width:140px}
+a.dl{display:block;background:transparent;border:1px solid #2A3340;color:#EDEFF3;border-radius:12px;
+  padding:13px;font-size:15px;font-weight:600;text-decoration:none;margin:10px 0}
+#out{display:none}
+</style>
+</head>
+<body>
+<h1>App icon maker</h1>
+<p>Pick your photo (e.g. the Goggins image saved to your phone). It gets center-cropped to a square and exported as the two PNG files the app needs — already correctly named.</p>
+<label class="pick">Choose photo<input type="file" id="file" accept="image/*"></label>
+<div id="out">
+  <div><canvas id="c180" width="180" height="180"></canvas><canvas id="c512" width="512" height="512" style="max-width:140px"></canvas></div>
+  <a class="dl" id="d180" download="icon-180.png">Download icon-180.png</a>
+  <a class="dl" id="d512" download="icon-512.png">Download icon-512.png</a>
+  <p>Move both files into your app folder, replacing the placeholders, then upload to GitHub. On iPhone the downloads land in Files → Downloads.</p>
+</div>
+<script>
+document.getElementById('file').onchange = e => {
+  const f = e.target.files[0]; if(!f) return;
+  const img = new Image();
+  img.onload = () => {
+    const side = Math.min(img.width, img.height);
+    const sx = (img.width - side)/2, sy = (img.height - side)/2;
+    [['c180',180,'d180'],['c512',512,'d512']].forEach(([cid,S,did])=>{
+      const c = document.getElementById(cid);
+      c.getContext('2d').drawImage(img, sx, sy, side, side, 0, 0, S, S);
+      document.getElementById(did).href = c.toDataURL('image/png');
+    });
+    document.getElementById('out').style.display = 'block';
+  };
+  img.src = URL.createObjectURL(f);
+};
+</script>
+</body>
+</html>

@@ -1,0 +1,471 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
+<title>Trainer</title>
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="apple-touch-icon" href="icon-180.png">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Trainer">
+<meta name="theme-color" content="#0E1116">
+<style>
+/* ── tokens: graphite, ember (heavy), steel-blue (light), mint (rest) ── */
+:root{
+  --bg:#0E1116; --surface:#171C24; --surface2:#1E2531; --line:#2A3340;
+  --text:#EDEFF3; --dim:#8A93A3;
+  --heavy:#FF7A45; --light:#7FB4FF; --rest:#4ED0A8; --prep:#C8CEDA; --danger:#F4647A;
+  --display:'Avenir Next Condensed','Arial Narrow',-apple-system,sans-serif;
+  --body:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;
+}
+*{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+html,body{margin:0;padding:0;background:var(--bg);color:var(--text);font-family:var(--body);
+  height:100%;overscroll-behavior:none}
+#app{min-height:100dvh;max-width:430px;margin:0 auto;
+  padding-left:env(safe-area-inset-left);padding-right:env(safe-area-inset-right)}
+@media (orientation:landscape){#app{max-width:960px}}
+button{font-family:var(--body);cursor:pointer}
+input,textarea{width:100%;background:var(--surface);border:1px solid var(--line);border-radius:12px;
+  color:var(--text);padding:12px 14px;font-size:16px;font-family:var(--body);outline:none}
+textarea{resize:vertical}
+h1{font-family:var(--display);font-weight:700;font-size:40px;line-height:1;letter-spacing:.5px;
+  text-transform:uppercase;margin:0}
+.sub{color:var(--dim);font-size:14px;margin:6px 0 24px}
+.screen{padding:max(28px,env(safe-area-inset-top)) 20px max(28px,env(safe-area-inset-bottom))}
+.list-screen{padding-bottom:120px}
+.btn{border:none;background:var(--heavy);color:#14100C;border-radius:12px;padding:12px 16px;
+  font-size:15px;font-weight:600}
+.btn.ghost{background:transparent;border:1px solid var(--line);color:var(--text)}
+.btn.danger{color:var(--danger);border-color:rgba(244,100,122,.33)}
+.btn:disabled{opacity:.4}
+.card{background:var(--surface);border:1px solid var(--line);border-radius:16px;padding:16px;margin-bottom:12px}
+.card-head{display:flex;justify-content:space-between;align-items:baseline}
+.card-name{font-family:var(--display);font-size:24px;font-weight:600;text-transform:uppercase;letter-spacing:.5px}
+.card-time{font-family:var(--display);font-size:18px;color:var(--dim)}
+.card-desc{color:var(--dim);font-size:13px;margin-top:4px}
+.chips{display:flex;gap:8px;margin-top:12px;flex-wrap:wrap}
+.chip{font-family:var(--display);font-size:15px;padding:3px 10px;border-radius:999px}
+.chip.h{border:1px solid var(--heavy);color:var(--heavy)}
+.chip.l{border:1px solid var(--light);color:var(--light)}
+.card-notes{margin-top:10px;font-size:13px;color:var(--dim);border-left:2px solid var(--line);padding-left:10px}
+.row{display:flex;gap:10px;margin-top:14px}
+.row .btn{flex:0 0 auto}.row .grow{flex:1}
+.fab{position:fixed;bottom:max(24px,env(safe-area-inset-bottom));left:50%;transform:translateX(-50%);
+  background:var(--heavy);color:#14100C;border:none;border-radius:999px;padding:16px 28px;
+  font-size:16px;font-weight:700;box-shadow:0 8px 24px rgba(255,122,69,.35)}
+.field{margin-bottom:18px}
+.label{font-size:12px;letter-spacing:1.2px;text-transform:uppercase;color:var(--dim);margin-bottom:8px;font-weight:600}
+.split{display:flex;gap:12px}.split>.field{flex:1}
+.seg{display:flex;gap:8px}
+.seg button{flex:1;padding:12px 0;border-radius:12px;border:1px solid var(--line);background:transparent;
+  color:var(--dim);font-weight:600}
+.seg button.on{border-color:var(--heavy);background:rgba(255,122,69,.13);color:var(--heavy)}
+.stepper{display:flex;align-items:center;gap:10px}
+.stepper button{width:44px;height:44px;border-radius:12px;border:1px solid var(--line);background:transparent;
+  color:var(--text);font-size:20px}
+.stepper .val{font-family:var(--display);font-size:28px;font-weight:600;width:36px;text-align:center}
+.setrow{display:flex;align-items:center;gap:10px;margin-bottom:8px}
+.setrow .tag{font-family:var(--display);font-size:16px;width:90px;text-transform:uppercase;letter-spacing:1px;flex:0 0 auto}
+.setrow input{flex:1}.setrow .unit{color:var(--dim);font-size:13px;width:26px;flex:0 0 auto}
+/* ── timer ── */
+.timer{min-height:100dvh;display:flex;flex-direction:column;
+  padding:max(24px,env(safe-area-inset-top)) 20px max(28px,env(safe-area-inset-bottom));
+  transition:background .6s}
+.t-top{display:flex;justify-content:space-between}
+.t-back{background:transparent;border:none;color:var(--dim);font-size:15px;padding:0}
+.t-name{font-family:var(--display);font-size:18px;color:var(--dim);text-transform:uppercase;letter-spacing:1.5px}
+.t-main{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center}
+.t-phase{font-family:var(--display);font-size:22px;letter-spacing:3px;text-transform:uppercase;margin-bottom:6px;text-align:center}
+.t-val{font-family:var(--display);font-size:20px;color:var(--dim);margin-bottom:10px;min-height:24px;text-align:center}
+.ringwrap{position:relative;width:290px;height:290px;flex-shrink:0}
+.t-digits{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;
+  font-family:var(--display);font-size:88px;font-weight:700;font-variant-numeric:tabular-nums}
+.dots{display:flex;gap:8px;margin-top:22px;justify-content:center}
+.dot{width:10px;height:10px;border-radius:999px;border:2px solid;transition:all .3s}
+.dot.active{width:14px;height:14px}
+.t-controls{margin-top:8px}
+.t-controls .row{margin-top:0}
+.t-reset{display:block;background:transparent;border:none;color:var(--dim);margin:12px auto 0;font-size:13px}
+.t-done{font-family:var(--display);font-size:56px;font-weight:700;text-transform:uppercase;color:var(--rest);text-align:center}
+.t-done-sub{color:var(--dim);margin:8px 0 20px;text-align:center}
+@media (orientation:landscape) and (max-height:560px){
+  .timer{padding-top:max(12px,env(safe-area-inset-top));padding-bottom:max(12px,env(safe-area-inset-bottom))}
+  .t-main{flex-direction:row;gap:40px}
+  .ringwrap{width:220px;height:220px}
+  .ringwrap svg{width:220px;height:220px}
+  .t-digits{font-size:64px}
+  .t-side{width:300px;max-width:45%}
+  .t-phase,.t-val{text-align:left}
+  .t-main .dots{justify-content:flex-start;margin:14px 0 22px}
+}
+/* ── modal ── */
+.overlay{position:fixed;inset:0;background:rgba(0,0,0,.6);display:flex;align-items:center;justify-content:center;z-index:50;padding:20px}
+.modal{background:var(--surface2);border:1px solid var(--line);border-radius:16px;padding:24px;width:100%;max-width:340px}
+.modal h3{margin:0 0 8px;font-size:17px}
+.modal p{color:var(--dim);font-size:14px;margin:0 0 20px}
+.backup-link{background:transparent;border:none;color:var(--dim);font-size:13px;text-decoration:underline;display:block;margin:24px auto 0}
+</style>
+</head>
+<body>
+<div id="app"></div>
+<script>
+/* ════════ DATA — versioned so future updates never lose workouts ════════
+   The storage key never changes. Every saved blob carries a schemaVersion.
+   When a future app version needs a new shape, add a step to migrate():
+   data is upgraded in place, never discarded.                            */
+const KEY = 'trainer.data';            // ← never change this key
+const SCHEMA_VERSION = 1;
+
+function migrate(d){
+  if (!d || typeof d !== 'object') return { schemaVersion: SCHEMA_VERSION, exercises: [] };
+  if (!d.schemaVersion){ d = { schemaVersion: 1, exercises: Array.isArray(d.exercises) ? d.exercises : (Array.isArray(d) ? d : []) }; }
+  /* future upgrades go here, e.g.:
+     if (d.schemaVersion === 1){ d.exercises.forEach(e => e.newField = 0); d.schemaVersion = 2; } */
+  return d;
+}
+function loadData(){
+  try { const raw = localStorage.getItem(KEY); if (raw) return migrate(JSON.parse(raw)); } catch(e){}
+  return { schemaVersion: SCHEMA_VERSION, exercises: [] };
+}
+function saveData(){ try { localStorage.setItem(KEY, JSON.stringify(data)); } catch(e){ console.error('save failed', e); } }
+
+let data = loadData();
+const uid = () => Math.random().toString(36).slice(2,10);
+const blank = () => ({ id: uid(), name:'', description:'', mode:'weights',
+  heavySets:3, lightSets:2, setValues:['','','','',''], workSec:45, restSec:60, notes:'' });
+const resizeVals = (v,n) => { const o=v.slice(0,n); while(o.length<n) o.push(''); return o; };
+const fmt = s => Math.floor(s/60)+':'+String(s%60).padStart(2,'0');
+const esc = s => String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+
+/* ════════ AUDIO (unlocked on first tap — iOS requirement) ════════ */
+let audioCtx = null;
+function ensureAudio(){ try{ if(!audioCtx) audioCtx = new (window.AudioContext||window.webkitAudioContext)();
+  if(audioCtx.state==='suspended') audioCtx.resume(); }catch(e){} }
+function beep(f=880,d=.15,w=0){ try{ ensureAudio(); if(!audioCtx) return;
+  const t=audioCtx.currentTime+w, o=audioCtx.createOscillator(), g=audioCtx.createGain();
+  o.frequency.value=f; o.type='sine';
+  g.gain.setValueAtTime(.001,t); g.gain.exponentialRampToValueAtTime(.4,t+.02);
+  g.gain.exponentialRampToValueAtTime(.001,t+d);
+  o.connect(g).connect(audioCtx.destination); o.start(t); o.stop(t+d+.05); }catch(e){} }
+const soundSetStart = ()=>{ beep(880,.12); beep(1175,.2,.15); };
+const soundSetEnd   = ()=>{ beep(523,.3);  beep(392,.4,.28); };
+const soundAllDone  = ()=>{ beep(880,.14); beep(1100,.14,.17); beep(1320,.35,.34); };
+document.addEventListener('touchstart', ensureAudio, {once:true, passive:true});
+
+/* ════════ RENDERING ════════ */
+const app = document.getElementById('app');
+let timer = null; // active timer state
+
+function go(view, arg){ if(timer){ clearInterval(timer.iv); timer=null; }
+  if(view==='list') renderList();
+  else if(view==='edit') renderEdit(arg);
+  else if(view==='timer') renderTimer(arg);
+  window.scrollTo(0,0);
+}
+
+/* ── LIST ── */
+function renderList(){
+  const exs = data.exercises;
+  app.innerHTML = `
+  <div class="screen list-screen">
+    <h1>Today's work</h1>
+    <div class="sub">${exs.length===0 ? 'No exercises yet — add your first one below.'
+      : exs.length+' exercise'+(exs.length>1?'s':'')+' · tap one to start its timer'}</div>
+    <div id="cards"></div>
+    <button class="backup-link" id="backupBtn">Backup &amp; restore workouts</button>
+  </div>
+  <button class="fab" id="addBtn">+ Add exercise</button>`;
+  const cards = document.getElementById('cards');
+  exs.forEach(ex => {
+    const total = ex.heavySets + ex.lightSets;
+    const unit = ex.mode==='run' ? 'km' : 'kg';
+    const chips = Array.from({length: total}).map((_,i)=>{
+      const v = ex.setValues[i];
+      return `<span class="chip ${i<ex.heavySets?'h':'l'}">${v?esc(v)+' '+unit:'—'}</span>`;
+    }).join('');
+    const card = document.createElement('div');
+    card.className = 'card';
+    card.innerHTML = `
+      <div class="tap" style="cursor:pointer">
+        <div class="card-head"><div class="card-name">${esc(ex.name)||'Untitled'}</div>
+          <div class="card-time">${fmt(ex.workSec)} / ${fmt(ex.restSec)}</div></div>
+        ${ex.description?`<div class="card-desc">${esc(ex.description)}</div>`:''}
+        <div class="chips">${chips}</div>
+        ${ex.notes?`<div class="card-notes">${esc(ex.notes)}</div>`:''}
+      </div>
+      <div class="row">
+        <button class="btn grow start">Start timer</button>
+        <button class="btn ghost edit">Edit</button>
+        <button class="btn ghost danger del">Delete</button>
+      </div>`;
+    const start = ()=>{ ensureAudio(); go('timer', ex.id); };
+    card.querySelector('.tap').onclick = start;
+    card.querySelector('.start').onclick = start;
+    card.querySelector('.edit').onclick = ()=> go('edit', JSON.parse(JSON.stringify(ex)));
+    card.querySelector('.del').onclick = ()=> confirmDelete(ex.id);
+    cards.appendChild(card);
+  });
+  document.getElementById('addBtn').onclick = ()=> go('edit', blank());
+  document.getElementById('backupBtn').onclick = backupModal;
+}
+
+function confirmDelete(id){
+  modal(`<h3>Delete this exercise?</h3><p>Its sets, weights and notes will be removed.</p>
+    <div class="row" style="margin-top:0">
+      <button class="btn ghost grow" data-x>Keep it</button>
+      <button class="btn grow" style="background:var(--danger);color:#fff" data-del>Delete</button></div>`,
+    el => { el.querySelector('[data-del]').onclick = ()=>{
+      data.exercises = data.exercises.filter(e=>e.id!==id); saveData(); closeModal(); renderList(); }; });
+}
+
+/* ── BACKUP / RESTORE (also protects data across hosting moves) ── */
+function backupModal(){
+  modal(`<h3>Backup &amp; restore</h3>
+    <p>Copy this text somewhere safe (Notes, email). Paste a backup here and tap Restore to bring workouts back.</p>
+    <textarea id="bk" rows="6" style="font-size:12px"></textarea>
+    <div class="row">
+      <button class="btn ghost grow" data-copy>Copy backup</button>
+      <button class="btn grow" data-restore>Restore</button></div>
+    <div class="row"><button class="btn ghost grow" data-x>Close</button></div>`,
+    el => {
+      const ta = el.querySelector('#bk'); ta.value = JSON.stringify(data);
+      el.querySelector('[data-copy]').onclick = ()=>{ ta.select();
+        navigator.clipboard ? navigator.clipboard.writeText(ta.value) : document.execCommand('copy');
+        el.querySelector('[data-copy]').textContent = 'Copied ✓'; };
+      el.querySelector('[data-restore]').onclick = ()=>{
+        try { const d = migrate(JSON.parse(ta.value));
+          if(!Array.isArray(d.exercises)) throw 0;
+          data = d; saveData(); closeModal(); renderList(); }
+        catch(e){ ta.value = 'Could not read that backup — paste the exact text you copied.'; } };
+    });
+}
+
+function modal(html, wire){
+  const ov = document.createElement('div'); ov.className='overlay'; ov.id='ov';
+  ov.innerHTML = `<div class="modal">${html}</div>`;
+  ov.onclick = e => { if(e.target===ov) closeModal(); };
+  const x = ov.querySelector('[data-x]'); if(x) x.onclick = closeModal;
+  document.body.appendChild(ov); if(wire) wire(ov);
+}
+function closeModal(){ const ov=document.getElementById('ov'); if(ov) ov.remove(); }
+
+/* ── EDIT ── */
+function renderEdit(ex){
+  const isNew = !data.exercises.some(e=>e.id===ex.id);
+  app.innerHTML = `<div class="screen">
+    <h1 style="font-size:34px;margin-bottom:20px">${isNew?'New exercise':'Edit exercise'}</h1>
+    <div class="field"><div class="label">Exercise name</div>
+      <input id="f-name" placeholder="e.g. Back squat"></div>
+    <div class="field"><div class="label">Description</div>
+      <textarea id="f-desc" rows="2" placeholder="Form cues, tempo, machine settings…"></textarea></div>
+    <div class="field"><div class="label">Type</div>
+      <div class="seg"><button id="m-w">Weights (kg)</button><button id="m-r">Run (km)</button></div></div>
+    <div class="split">
+      <div class="field"><div class="label">Heavy sets</div>
+        <div class="stepper"><button id="h-">−</button><span class="val" id="h-val" style="color:var(--heavy)"></span><button id="h+">+</button></div></div>
+      <div class="field"><div class="label">Light sets</div>
+        <div class="stepper"><button id="l-">−</button><span class="val" id="l-val" style="color:var(--light)"></span><button id="l+">+</button></div></div>
+    </div>
+    <div class="split">
+      <div class="field"><div class="label">Work (seconds)</div>
+        <input id="f-work" type="number" inputmode="numeric" min="5" max="3600"></div>
+      <div class="field"><div class="label">Rest (seconds)</div>
+        <input id="f-rest" type="number" inputmode="numeric" min="5" max="3600"></div>
+    </div>
+    <div class="field"><div class="label" id="sets-label"></div><div id="sets"></div></div>
+    <div class="field"><div class="label">Notes</div>
+      <textarea id="f-notes" rows="3" placeholder="PRs, how it felt, what to change next time…"></textarea></div>
+    <div class="row">
+      <button class="btn ghost grow" id="cancel">Cancel</button>
+      <button class="btn" id="save" style="flex:2">Save exercise</button></div>
+  </div>`;
+  const $ = id => document.getElementById(id);
+  $('f-name').value = ex.name; $('f-desc').value = ex.description; $('f-notes').value = ex.notes;
+  $('f-work').value = ex.workSec; $('f-rest').value = ex.restSec;
+  function commitSec(id, key){ const el=$(id);
+    el.onblur = ()=>{ const n=Math.min(3600,Math.max(5,parseInt(el.value,10)||5)); el.value=n; ex[key]=n; }; }
+  commitSec('f-work','workSec'); commitSec('f-rest','restSec');
+  $('f-name').oninput = e=> ex.name = e.target.value;
+  $('f-desc').oninput = e=> ex.description = e.target.value;
+  $('f-notes').oninput = e=> ex.notes = e.target.value;
+
+  function drawMode(){ $('m-w').className = ex.mode==='weights'?'on':''; $('m-r').className = ex.mode==='run'?'on':''; drawSets(); }
+  $('m-w').onclick = ()=>{ ex.mode='weights'; drawMode(); };
+  $('m-r').onclick = ()=>{ ex.mode='run'; drawMode(); };
+
+  function drawCounts(){ $('h-val').textContent = ex.heavySets; $('l-val').textContent = ex.lightSets;
+    ex.setValues = resizeVals(ex.setValues, ex.heavySets+ex.lightSets); drawSets(); }
+  $('h+').onclick = ()=>{ ex.heavySets++; drawCounts(); };
+  $('h-').onclick = ()=>{ if(ex.heavySets>0){ ex.heavySets--; drawCounts(); } };
+  $('l+').onclick = ()=>{ ex.lightSets++; drawCounts(); };
+  $('l-').onclick = ()=>{ if(ex.lightSets>0){ ex.lightSets--; drawCounts(); } };
+
+  function drawSets(){
+    const unit = ex.mode==='run'?'km':'kg';
+    $('sets-label').textContent = ex.mode==='run'?'Distance per set (km)':'Weight per set (kg)';
+    const box = $('sets'); box.innerHTML='';
+    for(let i=0;i<ex.heavySets+ex.lightSets;i++){
+      const heavy = i<ex.heavySets;
+      const row = document.createElement('div'); row.className='setrow';
+      row.innerHTML = `<span class="tag" style="color:var(--${heavy?'heavy':'light'})">${heavy?'Heavy '+(i+1):'Light '+(i-ex.heavySets+1)}</span>
+        <input type="number" inputmode="decimal" placeholder="${unit}"><span class="unit">${unit}</span>`;
+      const inp = row.querySelector('input'); inp.value = ex.setValues[i];
+      inp.oninput = e => ex.setValues[i] = e.target.value;
+      box.appendChild(row);
+    }
+  }
+  drawMode(); drawCounts();
+
+  $('cancel').onclick = ()=> go('list');
+  $('save').onclick = ()=>{ if(!ex.name.trim()) { $('f-name').focus(); return; }
+    const i = data.exercises.findIndex(e=>e.id===ex.id);
+    if(i>=0) data.exercises[i]=ex; else data.exercises.push(ex);
+    saveData(); go('list'); };
+}
+
+/* ── TIMER (5s get-ready, then work/rest cycles; auto-starts) ── */
+function buildPlan(ex){
+  const p=[], total=ex.heavySets+ex.lightSets;
+  if(total>0) p.push({kind:'prep', setIndex:0, dur:5});
+  for(let i=0;i<total;i++){ const h=i<ex.heavySets;
+    p.push({kind:'work', setIndex:i, isHeavy:h, dur:ex.workSec, value:ex.setValues[i]});
+    if(i<total-1) p.push({kind:'rest', setIndex:i, isHeavy:h, dur:ex.restSec}); }
+  return p;
+}
+
+function renderTimer(id){
+  const ex = data.exercises.find(e=>e.id===id);
+  if(!ex){ go('list'); return; }
+  const plan = buildPlan(ex);
+  const totalSets = ex.heavySets + ex.lightSets;
+  timer = { iv:null, step:0, remaining:plan[0]?plan[0].dur:0, running:false, done:plan.length===0 };
+
+  const SIZE_P=290, SIZE_L=220;
+  app.innerHTML = `<div class="timer" id="tscr">
+    <div class="t-top"><button class="t-back" id="back">← Back</button>
+      <div class="t-name">${esc(ex.name)}</div></div>
+    <div class="t-main" id="tmain">
+      <div class="ringwrap" id="ringwrap">
+        <svg id="ringsvg" width="290" height="290" style="transform:rotate(-90deg)">
+          <circle id="ringbg" cx="145" cy="145" r="130" fill="none" stroke="var(--line)" stroke-width="10"/>
+          <circle id="ring" cx="145" cy="145" r="130" fill="none" stroke-width="10" stroke-linecap="round"
+            style="transition:stroke-dashoffset 1s linear, stroke .5s"/>
+        </svg>
+        <div class="t-digits" id="digits"></div>
+      </div>
+      <div class="t-side" id="tside">
+        <div class="t-phase" id="phase"></div>
+        <div class="t-val" id="pval"></div>
+        <div class="dots" id="dots"></div>
+      </div>
+    </div>
+    <div class="t-controls" id="ctrls">
+      <div class="row">
+        <button class="btn ghost" id="prev" style="width:64px">‹‹</button>
+        <button class="btn grow" id="toggle" style="font-size:17px"></button>
+        <button class="btn ghost" id="next" style="width:64px">››</button>
+      </div>
+      <button class="t-reset" id="resetSet">Reset this set</button>
+    </div>
+  </div>`;
+  const $ = i => document.getElementById(i);
+  $('back').onclick = ()=> go('list');
+
+  const land = ()=> matchMedia('(orientation: landscape) and (max-height:560px)').matches;
+  function geometry(){
+    const S = land()?SIZE_L:SIZE_P, R=S/2-15;
+    const svg=$('ringsvg'); svg.setAttribute('width',S); svg.setAttribute('height',S);
+    [['ringbg'],['ring']].forEach(([id])=>{ const c=$(id);
+      c.setAttribute('cx',S/2); c.setAttribute('cy',S/2); c.setAttribute('r',R); });
+    const circ=2*Math.PI*R; $('ring').setAttribute('stroke-dasharray',circ);
+    return circ;
+  }
+  let CIRC = geometry();
+  addEventListener('resize', ()=>{ CIRC=geometry(); draw(); });
+
+  function cur(){ return plan[Math.min(timer.step, plan.length-1)]; }
+  function phaseColor(){ const c=cur();
+    if(timer.done) return 'var(--rest)';
+    if(c.kind==='prep') return 'var(--prep)';
+    if(c.kind==='rest') return 'var(--rest)';
+    return c.isHeavy ? 'var(--heavy)' : 'var(--light)'; }
+
+  function draw(){
+    const c = cur();
+    if(timer.done){
+      $('tmain').innerHTML = `<div><div class="t-done">Done</div>
+        <div class="t-done-sub">${totalSets} sets complete. Nice work.</div></div>`;
+      $('ctrls').innerHTML = `<div class="row">
+        <button class="btn ghost grow" id="again">Run again</button>
+        <button class="btn grow" id="finish">Finish</button></div>`;
+      $('again').onclick = ()=> renderTimer(id);
+      $('finish').onclick = ()=> go('list');
+      $('tscr').style.background = `radial-gradient(circle at 50% 30%, rgba(78,208,168,.08), var(--bg) 65%)`;
+      return;
+    }
+    $('phase').textContent = c.kind==='prep' ? 'Get ready'
+      : c.kind==='rest' ? 'Rest'
+      : (c.isHeavy ? 'Heavy set '+(c.setIndex+1) : 'Light set '+(c.setIndex-ex.heavySets+1));
+    $('phase').style.color = phaseColor();
+    $('pval').textContent = (c.kind==='work' && c.value) ? c.value+' '+(ex.mode==='run'?'km':'kg') : '';
+    $('digits').textContent = fmt(timer.remaining);
+    const ring=$('ring');
+    ring.style.stroke = phaseColor();
+    ring.setAttribute('stroke-dashoffset', CIRC*(1 - (c.dur>0 ? timer.remaining/c.dur : 0)));
+    $('tscr').style.background = `radial-gradient(circle at 50% 30%, color-mix(in srgb, ${phaseColor()} 8%, transparent), var(--bg) 65%)`;
+    const dots=$('dots'); dots.innerHTML='';
+    for(let i=0;i<totalSets;i++){
+      const passed = i<c.setIndex || (i===c.setIndex && c.kind==='rest');
+      const active = i===c.setIndex && c.kind==='work';
+      const col = i<ex.heavySets ? 'var(--heavy)' : 'var(--light)';
+      const d=document.createElement('span');
+      d.className='dot'+(active?' active':'');
+      d.style.borderColor=col; d.style.background=(passed||active)?col:'transparent';
+      dots.appendChild(d);
+    }
+    $('toggle').textContent = timer.running ? 'Pause'
+      : (timer.step===0 && timer.remaining===plan[0].dur) ? 'Start' : 'Resume';
+    $('toggle').style.background = phaseColor();
+  }
+
+  function tick(){
+    if(timer.remaining > 1){
+      if(timer.remaining <= 4) beep(660,.1);
+      timer.remaining--; draw(); return;
+    }
+    const next = timer.step+1;
+    if(next >= plan.length){ soundSetEnd(); soundAllDone();
+      stop(); timer.done=true; draw(); return; }
+    if(plan[next].kind==='work') soundSetStart(); else soundSetEnd();
+    timer.step = next; timer.remaining = plan[next].dur; draw();
+  }
+  function start(){ if(timer.running||timer.done) return; ensureAudio();
+    timer.running=true; timer.iv=setInterval(tick,1000); draw(); }
+  function stop(){ timer.running=false; if(timer.iv) clearInterval(timer.iv); timer.iv=null; }
+
+  $('toggle').onclick = ()=>{ ensureAudio();
+    if(timer.running){ stop(); draw(); }
+    else { if(timer.step===0 && timer.remaining===plan[0].dur) beep(660,.12); start(); } };
+  $('prev').onclick = ()=>{ if(timer.step>0){ ensureAudio(); timer.step--; timer.remaining=plan[timer.step].dur; timer.done=false; draw(); } };
+  $('next').onclick = ()=>{ if(timer.step<plan.length-1){ ensureAudio(); timer.step++; timer.remaining=plan[timer.step].dur; timer.done=false; draw(); } };
+  $('resetSet').onclick = ()=>{ timer.remaining = cur().dur; draw(); };
+
+  /* keep the screen awake during a workout where supported */
+  let wakeLock=null;
+  async function keepAwake(){ try{ if('wakeLock' in navigator) wakeLock = await navigator.wakeLock.request('screen'); }catch(e){} }
+  document.addEventListener('visibilitychange', ()=>{ if(document.visibilityState==='visible' && timer && timer.running) keepAwake(); });
+
+  draw();
+  /* auto-start with the 5s get-ready lead */
+  if(plan.length>0){ beep(660,.12); start(); keepAwake(); }
+}
+
+/* ════════ BOOT ════════ */
+renderList();
+if('serviceWorker' in navigator){
+  addEventListener('load', ()=> navigator.serviceWorker.register('sw.js').catch(()=>{}));
+}
+</script>
+</body>
+</html>
