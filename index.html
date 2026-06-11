@@ -5,7 +5,9 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
 <title>Trainer</title>
 <link rel="manifest" href="manifest.webmanifest">
-<link rel="apple-touch-icon" href="icon-180.png">
+<link rel="apple-touch-icon" href="apple-touch-icon.png">
+<link rel="apple-touch-icon" sizes="180x180" href="icon-180.png">
+<link rel="apple-touch-icon" sizes="512x512" href="icon-512.png">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="apple-mobile-web-app-title" content="Trainer">
@@ -67,7 +69,7 @@ h1{font-family:var(--display);font-weight:700;font-size:40px;line-height:1;lette
 .stepper .val{font-family:var(--display);font-size:28px;font-weight:600;width:36px;text-align:center}
 .setrow{display:flex;align-items:center;gap:10px;margin-bottom:8px}
 .setrow .tag{font-family:var(--display);font-size:16px;width:90px;text-transform:uppercase;letter-spacing:1px;flex:0 0 auto}
-.setrow input{flex:1}.setrow .unit{color:var(--dim);font-size:13px;width:26px;flex:0 0 auto}
+.setrow input{flex:1;min-width:0}.setrow input.reps{flex:0 0 76px}.setrow .unit{color:var(--dim);font-size:13px;width:22px;flex:0 0 auto}
 /* ── timer ── */
 .timer{min-height:100dvh;display:flex;flex-direction:column;
   padding:max(24px,env(safe-area-inset-top)) 20px max(28px,env(safe-area-inset-bottom));
@@ -115,13 +117,16 @@ h1{font-family:var(--display);font-weight:700;font-size:40px;line-height:1;lette
    When a future app version needs a new shape, add a step to migrate():
    data is upgraded in place, never discarded.                            */
 const KEY = 'trainer.data';            // ← never change this key
-const SCHEMA_VERSION = 1;
+const SCHEMA_VERSION = 2;
 
 function migrate(d){
   if (!d || typeof d !== 'object') return { schemaVersion: SCHEMA_VERSION, exercises: [] };
   if (!d.schemaVersion){ d = { schemaVersion: 1, exercises: Array.isArray(d.exercises) ? d.exercises : (Array.isArray(d) ? d : []) }; }
-  /* future upgrades go here, e.g.:
-     if (d.schemaVersion === 1){ d.exercises.forEach(e => e.newField = 0); d.schemaVersion = 2; } */
+  if (d.schemaVersion === 1){
+    (d.exercises||[]).forEach(e => { if(!Array.isArray(e.setReps)) e.setReps = (e.setValues||[]).map(()=>''); });
+    d.schemaVersion = 2;
+  }
+  /* future upgrades go here following the same pattern */
   return d;
 }
 function loadData(){
@@ -133,7 +138,8 @@ function saveData(){ try { localStorage.setItem(KEY, JSON.stringify(data)); } ca
 let data = loadData();
 const uid = () => Math.random().toString(36).slice(2,10);
 const blank = () => ({ id: uid(), name:'', description:'', mode:'weights',
-  heavySets:3, lightSets:2, setValues:['','','','',''], workSec:45, restSec:60, notes:'' });
+  heavySets:3, lightSets:2, setValues:['','','','',''], setReps:['','','','',''],
+  workSec:45, restSec:60, notes:'' });
 const resizeVals = (v,n) => { const o=v.slice(0,n); while(o.length<n) o.push(''); return o; };
 const fmt = s => Math.floor(s/60)+':'+String(s%60).padStart(2,'0');
 const esc = s => String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
@@ -181,8 +187,9 @@ function renderList(){
     const total = ex.heavySets + ex.lightSets;
     const unit = ex.mode==='run' ? 'km' : 'kg';
     const chips = Array.from({length: total}).map((_,i)=>{
-      const v = ex.setValues[i];
-      return `<span class="chip ${i<ex.heavySets?'h':'l'}">${v?esc(v)+' '+unit:'—'}</span>`;
+      const v = ex.setValues[i], r = (ex.setReps||[])[i];
+      const txt = (v?esc(v)+' '+unit:'—') + (r?' × '+esc(r):'');
+      return `<span class="chip ${i<ex.heavySets?'h':'l'}">${txt}</span>`;
     }).join('');
     const card = document.createElement('div');
     card.className = 'card';
@@ -295,7 +302,9 @@ function renderEdit(ex){
   $('m-r').onclick = ()=>{ ex.mode='run'; drawMode(); };
 
   function drawCounts(){ $('h-val').textContent = ex.heavySets; $('l-val').textContent = ex.lightSets;
-    ex.setValues = resizeVals(ex.setValues, ex.heavySets+ex.lightSets); drawSets(); }
+    const n = ex.heavySets+ex.lightSets;
+    ex.setValues = resizeVals(ex.setValues, n);
+    ex.setReps = resizeVals(ex.setReps||[], n); drawSets(); }
   $('h+').onclick = ()=>{ ex.heavySets++; drawCounts(); };
   $('h-').onclick = ()=>{ if(ex.heavySets>0){ ex.heavySets--; drawCounts(); } };
   $('l+').onclick = ()=>{ ex.lightSets++; drawCounts(); };
@@ -309,9 +318,13 @@ function renderEdit(ex){
       const heavy = i<ex.heavySets;
       const row = document.createElement('div'); row.className='setrow';
       row.innerHTML = `<span class="tag" style="color:var(--${heavy?'heavy':'light'})">${heavy?'Heavy '+(i+1):'Light '+(i-ex.heavySets+1)}</span>
-        <input type="number" inputmode="decimal" placeholder="${unit}"><span class="unit">${unit}</span>`;
-      const inp = row.querySelector('input'); inp.value = ex.setValues[i];
+        <input type="number" inputmode="decimal" placeholder="${unit}"><span class="unit">${unit}</span>
+        <input type="number" inputmode="numeric" class="reps" placeholder="reps"><span class="unit">×</span>`;
+      const [inp, rinp] = row.querySelectorAll('input');
+      inp.value = ex.setValues[i];
       inp.oninput = e => ex.setValues[i] = e.target.value;
+      rinp.value = (ex.setReps||[])[i] || '';
+      rinp.oninput = e => ex.setReps[i] = e.target.value;
       box.appendChild(row);
     }
   }
@@ -329,7 +342,7 @@ function buildPlan(ex){
   const p=[], total=ex.heavySets+ex.lightSets;
   if(total>0) p.push({kind:'prep', setIndex:0, dur:5});
   for(let i=0;i<total;i++){ const h=i<ex.heavySets;
-    p.push({kind:'work', setIndex:i, isHeavy:h, dur:ex.workSec, value:ex.setValues[i]});
+    p.push({kind:'work', setIndex:i, isHeavy:h, dur:ex.workSec, value:ex.setValues[i], reps:(ex.setReps||[])[i]});
     if(i<total-1) p.push({kind:'rest', setIndex:i, isHeavy:h, dur:ex.restSec}); }
   return p;
 }
@@ -408,7 +421,12 @@ function renderTimer(id){
       : c.kind==='rest' ? 'Rest'
       : (c.isHeavy ? 'Heavy set '+(c.setIndex+1) : 'Light set '+(c.setIndex-ex.heavySets+1));
     $('phase').style.color = phaseColor();
-    $('pval').textContent = (c.kind==='work' && c.value) ? c.value+' '+(ex.mode==='run'?'km':'kg') : '';
+    if(c.kind==='work'){
+      const parts=[];
+      if(c.value) parts.push(c.value+' '+(ex.mode==='run'?'km':'kg'));
+      if(c.reps) parts.push(c.reps+' reps');
+      $('pval').textContent = parts.join(' × ');
+    } else $('pval').textContent = '';
     $('digits').textContent = fmt(timer.remaining);
     const ring=$('ring');
     ring.style.stroke = phaseColor();

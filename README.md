@@ -49,3 +49,12 @@ Extra safety nets built into the app:
 - Don't use Safari's "Clear History and Website Data" — that erases
   localStorage (your workouts). Take a backup first if you must.
 - The icon photo is for your personal use on your own phone.
+
+## Icon not showing? (troubleshooting)
+iOS captures the icon ONLY at the moment you tap "Add to Home Screen".
+1. Make sure ALL of these are in the repo root: icon-180.png, icon-512.png,
+   apple-touch-icon.png (all three are in this package)
+2. Verify the file really loads: open
+   https://YOURNAME.github.io/REPO/icon-180.png in the browser —
+   you must see the photo. If you see 404, the upload didn't work.
+3. Delete the old home-screen icon, reload the app page, add it again.
