@@ -111,6 +111,10 @@ h1{font-family:var(--display);font-weight:700;font-size:40px;line-height:1;lette
   height:16px;margin-bottom:10px;opacity:0;transition:opacity .3s}
 .saved.on{opacity:1}
 .saved.ok{color:var(--rest)}
+input[type=range]{-webkit-appearance:none;background:transparent;padding:0;border:none;height:28px}
+input[type=range]::-webkit-slider-runnable-track{height:6px;border-radius:999px;background:var(--line)}
+input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:24px;height:24px;border-radius:999px;
+  background:var(--heavy);margin-top:-9px}
 </style>
 </head>
 <body>
@@ -121,7 +125,7 @@ h1{font-family:var(--display);font-weight:700;font-size:40px;line-height:1;lette
    When a future app version needs a new shape, add a step to migrate():
    data is upgraded in place, never discarded.                            */
 const KEY = 'trainer.data';            // ← never change this key
-const SCHEMA_VERSION = 2;
+const SCHEMA_VERSION = 3;
 
 function migrate(d){
   if (!d || typeof d !== 'object') return { schemaVersion: SCHEMA_VERSION, exercises: [] };
@@ -130,6 +134,11 @@ function migrate(d){
     (d.exercises||[]).forEach(e => { if(!Array.isArray(e.setReps)) e.setReps = (e.setValues||[]).map(()=>''); });
     d.schemaVersion = 2;
   }
+  if (d.schemaVersion === 2){
+    d.settings = d.settings || { sound: true, volume: 0.8, halfway: true };
+    d.schemaVersion = 3;
+  }
+  if (!d.settings) d.settings = { sound: true, volume: 0.8, halfway: true };
   /* future upgrades go here following the same pattern */
   return d;
 }
@@ -152,16 +161,78 @@ const esc = s => String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>'
 let audioCtx = null;
 function ensureAudio(){ try{ if(!audioCtx) audioCtx = new (window.AudioContext||window.webkitAudioContext)();
   if(audioCtx.state==='suspended') audioCtx.resume(); }catch(e){} }
-function beep(f=880,d=.15,w=0){ try{ ensureAudio(); if(!audioCtx) return;
-  const t=audioCtx.currentTime+w, o=audioCtx.createOscillator(), g=audioCtx.createGain();
-  o.frequency.value=f; o.type='sine';
-  g.gain.setValueAtTime(.001,t); g.gain.exponentialRampToValueAtTime(.4,t+.02);
-  g.gain.exponentialRampToValueAtTime(.001,t+d);
-  o.connect(g).connect(audioCtx.destination); o.start(t); o.stop(t+d+.05); }catch(e){} }
-const soundSetStart = ()=>{ beep(880,.12); beep(1175,.2,.15); };
-const soundSetEnd   = ()=>{ beep(523,.3);  beep(392,.4,.28); };
-const soundAllDone  = ()=>{ beep(880,.14); beep(1100,.14,.17); beep(1320,.35,.34); };
-document.addEventListener('touchstart', ensureAudio, {once:true, passive:true});
+/* tone(freq, dur, delay, {vol, type, glide}) — glide slides to a 2nd pitch */
+function tone(f=880, d=.15, w=0, opt={}){
+  try{
+    if(!data.settings.sound && !opt.force) return;
+    ensureAudio(); if(!audioCtx) return;
+    const t=audioCtx.currentTime+w, o=audioCtx.createOscillator(), g=audioCtx.createGain();
+    o.type = opt.type || 'sine';
+    o.frequency.setValueAtTime(f, t);
+    if(opt.glide) o.frequency.exponentialRampToValueAtTime(opt.glide, t+d);
+    const peak = Math.max(.02, (opt.vol!=null?opt.vol:.4) * (data.settings.volume!=null?data.settings.volume:.8));
+    g.gain.setValueAtTime(.001,t);
+    g.gain.exponentialRampToValueAtTime(peak, t+.02);
+    g.gain.exponentialRampToValueAtTime(.001, t+d);
+    o.connect(g).connect(audioCtx.destination); o.start(t); o.stop(t+d+.05);
+  }catch(e){}
+}
+const beep = (f,d,w)=> tone(f,d,w);
+
+/* ── the sound vocabulary ─────────────────────────────────────
+   heavy set  : low, heavy two-note punch (feels like weight)
+   light set  : bright, quick rising chirp
+   set end    : falling two-note "rack it"
+   rest start : soft low pad, distinct from a work start
+   halfway    : single soft tick mid-set
+   countdown  : three short ticks before every change
+   finish     : rising three-note fanfare                     */
+const sndHeavyStart = ()=>{ tone(196,.22,0,{vol:.55,type:'triangle'});
+                            tone(294,.34,.18,{vol:.5,type:'triangle',glide:392}); };
+const sndLightStart = ()=>{ tone(784,.12,0,{vol:.4});
+                            tone(1175,.22,.13,{vol:.4,glide:1319}); };
+const sndSetEnd     = ()=>{ tone(523,.28,0,{vol:.45});
+                            tone(392,.42,.26,{vol:.45,glide:294}); };
+const sndRestStart  = ()=>{ sndSetEnd(); tone(262,.5,.55,{vol:.22,type:'triangle'}); };
+const sndHalfway    = ()=>{ tone(880,.09,0,{vol:.22}); };
+const sndCountTick  = ()=>{ tone(660,.09,0,{vol:.3}); };
+const sndPrepTick   = ()=>{ tone(660,.12,0,{vol:.3}); };
+const sndAllDone    = ()=>{ tone(523,.16,0,{vol:.5}); tone(659,.16,.18,{vol:.5});
+                            tone(784,.45,.36,{vol:.55,type:'triangle'}); };
+/* legacy names kept so older calls still work */
+const soundSetStart = sndLightStart, soundSetEnd = sndSetEnd, soundAllDone = sndAllDone;
+/* ── background keep-alive ─────────────────────────────────────
+   iOS suspends web pages (and their timers) when you switch apps.
+   The one sanctioned way to keep running is an active audio
+   session — so during a workout we loop a near-silent track via
+   an <audio> element, exactly like music apps do. Bonus: media
+   playback ignores the ring/silent switch, so cues become
+   audible even in silent mode once the session is running.    */
+const keepAlive = document.createElement('audio');
+keepAlive.loop = true;
+keepAlive.setAttribute('playsinline','');
+keepAlive.preload = 'auto';
+keepAlive.src = 'data:audio/wav;base64,UklGRqQ+AABXQVZFZm10IBAAAAABAAEAQB8AAIA+AAACABAAZGF0YYA+AAD+/wEAAwADAAMA/f////3/AAADAAAAAAACAAAAAwD+//3/AAD9/wMAAAAAAAEAAwADAP3/AgAAAP//AgADAP7/AQD9/////f/9//3/AgABAP3/AAACAP7/AAACAP3/AQD+/wMAAAAAAAEA/v////7/AgD+/wMAAAD///3/AAADAAEAAgD9//7/AgACAAMA///9/wIA//8CAAIAAQAAAAEAAwACAP7//////wEAAAADAAEAAAABAAMA/f8AAP7/AgADAAAAAAACAP7///8BAAIAAwACAAIA///9/wAAAgABAP3/AwD+/wEAAwAAAP//AAACAP3/AAD9////AgADAAEAAQABAAAAAgD+//7/AQD+//3/AwD+/wEAAwABAP7/AAABAP//AwABAP//AAD//wIAAQABAAIA/f8AAAMAAwADAAIAAQADAP7/AQADAAEA/v8AAP3/AAADAP//AQABAP7/AQAAAAAAAwD//wAA///9/wEAAQABAAMAAQD//wAAAQD9/wMA/v8CAP7/AQABAP7/AwD9/wMAAQADAAMAAwD///3/AwACAP3//f8DAP3/AAD9/wMAAwD///7////9/wMAAQD+///////9//7//v///wEA/v8CAP//AgACAP//AAACAP//AAAAAP3//f///wAA//8AAAMA/v////3///8CAAEA/v8BAAAAAwD9//7//f8AAP7//f8CAP7/AAACAAEAAgAAAAEAAwD+/wIAAwACAAEAAAD+/wEAAgD9/wAAAgABAAMA//8CAAIAAAD9/wIA///+//7//f////3/AwD9//////8CAP7/AAABAP///v/9/wEAAwD9/wEAAwD+/wEAAAD+/wMAAwADAAMAAgABAAEA/f8AAP7////9//7/AQACAAAAAQD+/wAA/f8CAAAA//8BAAAA/f///wEAAwAAAP///f/+//7/AwD//wMAAQADAP7///8AAP7///8CAP3/AwAAAAEA//8DAAIAAQAAAAMAAQD+//3/AgD9//3//v/+//7/AQD+////AwD//wEAAQADAP///////////f////7/AwABAAMAAgAAAP7/AQABAAMA/f////3/AAD9/wAAAwADAP7/AwD+/////f8BAAEAAwAAAP3/AQABAP7/AQD9/////////wEAAQD9/wAA///9/wMA/f8DAP///f8BAAIA/f/9/wAA/f8DAAMA/f/+//7/AwABAAAA/v/9/wAA/v8CAP7//v8CAAMA/f8AAAAAAwABAAMA//8BAP//AgAAAP///f/+/wIA///9//3//f8DAP//AgABAP//AAAAAP//AAD9//3///8BAAAA/f////7/AwABAAMAAQADAAIAAAACAP/////+/wEA/v////7//v////3/AwD///3/AwAAAP3/AgABAAIA///+/wAA///9/////v///wMAAwABAP///v////3/AQABAAEAAwABAP3//v/+//3/AwD+/wAA/f///wEAAwD9/wIA/f/9/wIA/f///wMAAwD//wAAAAADAAMA/v/9/wEAAwADAP///f8BAAIA/v/+/wMA/v/+/wMAAwD//////f8CAAEAAwABAP///v/+//7/AQACAP3/AwD//wMAAQADAAIAAQADAAIAAgD+//7///8AAAEA/v/9/wIAAwACAP7///8DAP3/AgAAAAMAAAABAP//AQAAAAMAAQAAAP3/AAADAP///v///wAA/f8DAAIAAAABAP3//f8CAP//AQD+/wEA/v/+////AwD//wAAAQAAAP7/AQD9//7/AAD9//7/AQD//wEAAgAAAAIAAgACAP7//v///wAAAgAAAP7/AgAAAP//AQABAAIAAgD//wIA/v/9//3/AwABAAIA///+/wEAAwADAP7//////wIA//8DAAEA///+/wIAAgACAAAAAQD9/wMA/f8BAAEAAQAAAP7//v///wAA/v8BAAIAAwADAP3/AAACAAAAAgACAP//AAABAAMA/v8BAAIA/f8BAP3/AwD//wIA/f///wIA/f/+/wMAAQADAAIAAgACAP3/AAADAP7/AwAAAAMAAAAAAP7///8AAP7/AQAAAP7//f8AAAEAAQAAAP3/AgD//////v8AAAIAAQD9//7/AQAAAAEA/f/9/wIAAQD+/wMA///+//7////+/wEA/v//////AQADAP//AwACAAAAAwADAAMAAwD+/wEA//8AAAAAAwD9/wMA/v8BAAAA/v///wMA/f8DAP3//f8BAAIA/f8BAP//AgADAAIAAgD+//3/AQD//wEAAwD//wAAAQACAP//AwABAP///f/9/wAAAgAAAP////8BAAAA//8DAAIAAgABAAAA/f8CAAAAAAD+/wEA/f///wIAAQACAAIAAwACAAEA/v8AAAEAAwABAAAAAgACAP//AgD+/wAAAQACAAEA/v///wEA/f8CAAAAAQAAAAAA//8DAAEAAQACAAIAAgD9/wAAAgD+/wIAAgD//wIA/f8AAAIAAgD+/wIAAwAAAAMA//8DAP7/AwD9/wMAAwABAP3//////wMAAgAAAAMAAgABAP///v8AAAMA//8AAP7/AAABAP3///8BAP3/AgABAAAA/f////3/AgAAAP3//v8BAAIA/v8CAP3/AAACAAIA//8BAP///v8BAP7//v///////f/9/wIAAwABAAIA//8AAAEAAQACAP3//v///wIAAgACAAMAAQD/////AQACAP7/AAABAAAA/v8AAAMA//8DAAEA//8CAP7///8BAAIA/v8DAAIA/f8DAAMAAQAAAP//AAADAP7/AwD///7//f8CAAIA/v8DAAEAAAABAAIA/v8BAP//AAABAP7//v8DAP7/AgAAAP////8DAAAA/v/9/wIA/v8CAAIA///9//3//v8AAP//AAD9//7//f/9/wMAAQD9/wMA/v8CAP3/AAACAAEAAwACAAEAAAD//wIAAwD///3/AQACAP7//f/+/wAA/v8AAAAAAAADAP7//v/+/wMA//8AAAEAAQAAAP7/AAACAP////8AAAEA/f/+//3//f/9/wMA/f8DAAAA//8AAAMAAQD///7/AAD+/wMAAwACAP7/AwD9//3/AAD+/wIAAQD9/wEAAAD///7//f8AAAIAAwD///3//f8BAP3/AQADAP7//f///wMA/f8AAP3//v/9/wAAAgD+/wIA//8CAAMAAwD+/wIAAAAAAP//AgD/////AgACAP7//v/9/wEAAwABAP7///8AAAEAAgABAAIAAQD9////AQAAAAEA/v8CAAEAAAACAP3/AgD//wIAAQACAAMA/f////7//f/+//3//v8DAAAAAwD9//3/AgD9/wMAAQAAAAEA///9/////f/+/wEA/f8AAAIA/v8AAAMAAgAAAP3/AgABAP///f///wMA///9/////f8DAAAA/f8CAP////8CAP7///8DAAAAAwD9/wMAAgD///3/AAADAP7/AQABAP7//////wEAAwAAAAEAAAD9//7/AgADAAAAAQABAAIAAwADAAEAAgABAAEA/f8DAP//AgD+//7///8AAAEA///9/wAA///+/wEA/f/9////AwADAAIAAQD//wAA/////////////wIAAgABAAEA/f8BAP3//v///wIA//8DAP//AQD9/wAA//8AAAAA//8CAAAAAwD9/wEAAwD9//7//f8BAAAAAQADAP//AwD+/wIAAQACAP////8DAAIA//8AAP//AAABAP//AQABAP7//f/+////AgD+/wEA/v/9//7/AwAAAAIAAQD9/wMA/f8BAAIA//8CAP3//v////3/AgABAAEAAgD9/wMA/f8DAAMA/v8CAAMA/v8BAAMAAAD9/wEA//8DAAAAAgADAP///v/+/wEAAAADAP7/AAAAAAIA//8BAP7/AwAAAAIA/f8DAAMA//8AAP7//f8CAAEAAwAAAAEAAAD9/wAAAQABAAMAAQABAAAA/f///wMAAAD9//7///8CAAIAAgD9/wEA/f8DAP//AQACAP//AwABAAIAAQABAP//AQAAAAEAAwABAAAAAQACAAEA//8AAP///v8BAAAAAQD+/wEAAwD+////AgD9/wAAAgACAAEA/f///wAAAAD//wIAAwACAP3//f/9/wMA/f8AAP//AAD//wMAAwD//wIAAgADAAAAAwD//wAAAAADAP3/AAD///7/AAD+//3//v8DAP////8DAP7/AQADAP//AAD//wEA//8CAAAAAgD//wAA//8DAAAA/v8CAAMAAAAAAAIAAAD9//3//v/+//7//v8CAP3//f////7/AAADAP3/AAACAAIA/v8DAP3//f8AAAEA/f8BAP7/AQAAAP///f8CAP3/AgABAAIAAAADAAIAAgD9////AgD///7/AAADAAMAAgADAP3/AwD+/wIAAgD9/wMAAAD9/wIAAAD//wIAAQAAAAAA/f8BAAMAAAD9//7/AAABAAIA/v/+/wEA//8AAAIAAQD//wMAAAACAAMAAQD+/wMAAwABAP//AwAAAP3//f8DAAIAAgD//wIA///9/wEAAgAAAP//AwADAP3//v8BAP////8CAP7/AAD+//7////+/wAAAQACAAEA/f8BAAMAAQABAP7/AAD/////AAACAP////8AAP7/AAD//wEAAAD+/////v8BAAMA/v8CAAEAAgAAAAEA/v/9/wEA//8BAAIA/v8CAAMAAwD+////AQAAAAAA///9//7//v8CAP///v/9/wIAAQADAAIA/f8BAP7/AgD9//7/AQD+/wEAAQACAP//AAD///3/AwD9/wMA//8DAAEA/v/9/wIA/v///wIAAgADAP////8BAAIAAQAAAP3//f///////v/9////AwD+/wIAAQD9/////f/9/wIA/f///////v///wEA/f////3//f/+/wAA//8CAAIAAgD+//3/AgD//////f8BAP///f///wMAAwACAAIAAwD+/wEAAwD//wAA/f8CAAEAAQACAAEAAAABAAAAAQAAAP///v8CAP//AQD+//3/AQABAP3//v/+//7/AAD//wEA/f///wEA//8BAP//AAD+/wAAAgD9/wIA///9/wIAAQD//wEAAQADAAMAAgABAAIAAQD9/wEA//8AAAIA/v/+//3/AQD+/wIAAwD+/wAAAwADAAMAAwD////////+//7/AwADAAAAAwAAAAAA/f8BAP7//////wIAAgADAAIAAQD9/wEA/f8DAAIA/v8AAAIAAQD9/wAA/f8DAAAAAQACAAAA/////wAAAAABAAAA/f/9/wAAAwD9/wIAAgACAP3/AwD9/wMA/f8BAP7/AQABAAMA//8BAP//AwABAAIA//8DAAAAAwACAP7/AwABAP7//f8BAP//AwD+//3/AwD9/wIA//8AAAIA/////wIAAgADAP3/AQAAAAAAAAD/////AwADAP//AAADAAIA/v8CAAEAAQD+//3///8CAP3/AQD+/wEAAgACAAAA//8DAAIA/f8BAP3/AAD+/wAAAgADAP7/AAACAP7//f/+//////8CAP7/AwACAAAAAgAAAP//AAACAAMAAgACAP7/AAAAAAAAAQD9/wEAAAD//wMA/v/+//3/AAAAAP3/AwD9/wIA/f/+/wAAAwAAAAIAAQADAAMA///+//7/AQADAP3////9/wAAAAADAAIAAgACAAMA/v8BAAIAAAD9/wEAAwD+/wAA/v8CAP7///8CAP7//f8DAAEAAQD+//7/AAABAP3/AQD+/wAA/v8DAP3/AQACAP7/AgABAAIAAQACAAEA/f/+/wAAAwAAAP3/AQACAP3/AAD9/wEA/f8CAAMAAAD9/wEA/v8DAP3//f8DAP//AAD//wIAAAD+/wEA/v8BAAIAAwD//wMAAQACAAAAAQADAAAAAQD+/wIAAAACAAAAAwD+/wAAAwD//////v///wEA//8DAP7/AwACAAEA/f8CAP/////+////////////AAD//wEAAAD9//7//v////7//v/9/wMAAQABAAEA/v8BAAAAAgADAP7/AQD+/wEAAAAAAAIA/v/9/wIA/f/+/wMAAgD9//3/AgAAAAAAAAACAP7/AQABAP7/AgABAAEA/f/+/wMAAAD+/////v8CAAIAAAD//wIAAwD+//7///8CAP7///8AAAEA///9/wEAAwD///7/AgAAAP3///8DAAMAAQABAP3/AQD//wMAAAD//wEA/f/9/wMAAwD///7/AwD+/wIAAwD9//3/AwAAAAIAAQD+/wIA/v8BAAEAAAD9/wIA/v8DAAAAAgABAP7/AwACAAEA//8CAP3/AgD9/wMA/v8DAAEAAAACAAAAAQABAP7////9/wIA/v8CAAIAAQABAP7/AwAAAP//AwACAAAAAAD//wAA/f8CAAMAAwD+//7/AQD9/wAAAwD9/wAA/v8AAAMAAgABAAMA///+//3//f8CAAIA/f8DAAAAAwAAAP7//v8BAAEA/v8DAAEAAAABAP///v/+////AgABAAMAAwD9/////f8AAP3/AwABAP7//v8DAP//AAD9/wEAAQD9/wMAAwABAAAA/f8AAAMAAQADAAEAAgD//wAA/////wAA/f8BAAMAAAD9/wAA//8BAAIA//8DAP7/AQABAAEAAwD///3/AwABAAMAAwADAP//AAAAAAEAAwD9/wEAAQD9//3/AQABAP3//f////////8DAAEA/f8CAP//AQD9/wAAAgD9/wMAAQAAAP//AQADAAEA/f/+///////+//7/AQD+/wEA/f8AAP//AwABAAAAAwD/////AwD//wEA///9/wIA/f8DAAIA/v8DAAMA//8DAAAAAQD//wEAAwABAP3//f8CAP7///8AAP3//v///wEAAgACAP///v/+//3///8CAAAA/f8CAAEA//8DAAMAAwD+/wMAAQD9/wEA////////AwABAP7//f8AAAMA//8DAAIA/f/9////AAACAP7/AQD9/wIAAQACAAIAAgADAAEAAAD+//7//v/9/wEA/v8BAAEA/f8CAP//AAD+/wMA/f///wAA//8BAAIA///+/wIA/f/9/wAA/f/+////AQD9//3//v8DAP3/AQADAP7//f8BAP7//v8AAP///v8AAAEA/////wAAAgD9//7/AQD+//7/AgABAP//AQAAAAEAAAD///3/AAD9//3/AgACAAEAAgABAAMAAAADAAIAAQD//////f8CAAAA/v8CAAEAAwAAAAMAAwABAAEAAgABAAEAAwAAAAEAAgACAAEAAwADAAAAAQAAAP7/AwD//wIAAwABAP//AQADAAMAAAABAAEA/////////f8BAAMA/f8DAAAAAAD///7/AQAAAP7/AgAAAP//AgACAP7/AAADAAAA/f8CAP3///8DAAMA/f///wMAAQACAP3///8AAP3/////////AQADAAMAAwD9//7/AgD9/////f8CAAMAAgD9//7/AwACAP//AAABAP///v/9/wIAAgACAP7/AwADAAMAAQACAAEAAgD///////8AAAAAAQAAAAMAAwADAP3//v8AAP7/AQD9/wEA/v8CAP7//v8CAAAAAAD+/wEA/v8CAP//AgACAP///f8CAAIAAgD//wAAAAD+/wIA/v/9////AAABAP//AwADAAEAAAD//wEA/f8BAAIA//8DAAEAAgD//wAA/f8DAP//AwD9/wIAAAD9/wEA/v8DAAEAAgACAAIA//8AAP//AwD+//3//f8BAAEAAQABAP7//v////3//f/+//3/AgD9/wAAAgACAAMA/f/9//3//f/9/wEA/////wMA/f8BAP3/AQD+/wAA/v//////AQABAAEA///+//7//v8AAP3//v8BAAIAAAD9//////8AAP3//f8BAP7/AQACAP3/AwD+//7//v/+////AwD9//3/AwD//wIA/v/9/wMAAAD+//7//f8CAP/////9/wEA/f8AAP7/AwD+/wIA/v/9//3//v/9/wIAAgD9//3/AwADAAIA/v///wIA//8BAAAAAwD+/wIA/f8CAP//AwD+/////////wAAAwADAAIAAwABAAAAAwACAAAA/f8AAP7/AwADAAAA///+/wEAAgD9//7//f8DAAMAAAD//wEA/////wMAAwD//wAAAAD///////8AAAAAAQD9/////v////7///8BAP7/AwABAAIAAgD+//7/AAACAAIA/v/+//7//f8DAAEA///+////AgD///7///8DAAAA///9/wAA/v8BAP//AAD9/wMA/v8CAP///f8CAP7/AAABAP3//f8CAP7/AgD//wIA//8BAAMA//8DAAMAAwABAAIAAwACAP////8CAP3//v8AAP3///8BAAIAAwD+//3//v8DAAMA/////wEAAAD+////AwD9//7///8CAAEA/f/+//3//v/+////AQD///7//v/+//3///8BAAEAAQABAAEAAwABAAMAAAADAAMAAAABAAEAAAD+/wEAAwD///7/AAADAP3////+//7/AwD+//7/AwD+//3//v8AAP///v/9/wMA///9/wEA/v8CAAIAAwD+//3/AAACAAIA/v8BAP///v8BAAIAAwADAAIAAgD9//7///8AAAEA/f/9/wMA//8AAAEA///+/wAA/f8BAP//AgACAAEAAgD//wEA//8DAAEA/f8AAP//AAADAP3////9/wIAAgADAP///f/+/////v//////AwADAP//AwD//wAAAAD9/////v8CAP///f/9/wAAAAABAP7//////wMAAgACAAEAAAABAP//AQD//wIA/v////7////9/wAA//8BAAIAAQACAAMA/v8AAAAA/v8DAAAAAgD+//3/AgACAP7//f8CAP3//f8BAAEAAAABAAAAAgD//wEAAwD+/wEAAgAAAAAA/f8AAAEAAgABAAMAAgAAAP7/AQABAP///f8DAAIA//8DAP//AAD+/wIAAgACAAEA//8DAP3/AAADAAMA///+//7//v8AAAMA/f///wEA//8DAP7/AQAAAAAA/f8BAP7/AQD9/wAAAgD+/wEA/v8AAAAA/f///////v/+/////v/+/wMAAgABAAEA///+/wEAAgAAAAAAAAABAAEA///+/wEAAQABAP//AQADAAMA/v///wIA/v8CAP3/AwD///3/AAAAAAIAAgABAAIA/v8BAAAAAAADAAEAAAD//wMA/v/9//3/AgD9//3/AQAAAP7/AAAAAP7/AAAAAAEAAwABAP3/AQD+/wEAAAAAAAAA/////wMAAwD+/wMAAQD///7/AwD9/wEA/f8DAAIA/f8BAP7/AAADAP//AAD//wIA/f8AAP3/AgAAAP//AAAAAP//AQD9//7/AAABAAMAAAABAAIAAwAAAAEA/v////7////+/wEA/v/+/wMAAwD+/wAAAgD+//3/AgD9/wAA/f8AAP7///8BAP////8AAP3/AAAAAAIAAAD//wIAAgD//wIAAQAAAP//AwADAP///v/9/wAA/v8AAP7/AAD9/wEA/f8BAP////8DAAAAAgABAAIA//8CAAEA//8BAAEAAwAAAP//AAACAAAAAwABAP7//v/+/wEA/v8DAAEA/v/9/wMA//8BAAMA/f///wAA/f////////8BAAEAAgADAAAA/v8DAAMA///+////AAACAAAAAgADAP7//f8AAAIA//8BAAMAAwABAAMA/v/+//3/AwABAP//AAD+/wIAAwD///3/AAD9/wMA///9/wMAAAD+//3/AQADAAIAAwD+/wMA///+/wAAAAD//wEAAwACAAIAAQD///7//v/+//7/AQD+//7//f8AAAEAAQD+/wAA/v8DAP//AQADAAIAAgACAP//AQD+//3///8DAP7//v/+/wIAAAABAAAA/f8CAP3//v8BAAAAAQD+//7///8CAP7///8CAP///f8AAAAA/f8BAAAA/v8CAP7//v8CAAMA/f8CAAIA///9////AwABAP7//f8DAP3/AwADAAMAAwD9/wMAAAD///3/AAACAAEAAQACAAIAAAACAP///v8AAP//AgD//wMAAAAAAAAA//8BAP7//v/9//7//v/+//3//v8CAAAAAAADAAEAAAABAP3//f/+/wMAAwADAAEA/f/9/wAAAwADAP//AAD+/wMA/v8CAAMAAgD//wAAAwD//wEAAgD9/wEAAAD+/wIAAQD//wEA/f////3/AwADAP7/AgACAP3/AAD+/wMA/f////7//v////3/AAACAP3/AAD9/wMAAwABAAAA/f8AAAEAAQABAP3//v8BAAMAAgACAAAAAgABAAEAAAD+/wEAAAAAAAMAAgD//wAA/f/9//7/AQABAAMAAgD///3//f////3//v/9/wIAAgABAP3//f8BAAAA/v/9////AAABAP3/AQAAAAEA//8AAAIA/f8CAAEA/f///wEAAAAAAP7///8DAP//AwAAAAAAAQD9////AQD+/wIAAgAAAAAA//8BAAEA/v///wEAAgAAAAMAAgACAAAAAgABAAEAAAAAAAMAAgD+/////f/9//7/AAADAP3/AwD/////AwADAP//AwABAP///v/9/wEA/v8AAAMA/f8AAAAAAgABAP//AQD///7/AgD9/wEA/v8DAP//AQADAP3/AwAAAP///f8CAP//AgABAAIA/f8BAAAA/f/9/wIA//8BAAEAAgACAAIAAQAAAP3/AQAAAAEA//8BAAMAAgD9//7//v/9/wEA/f8DAP3//f8BAAEA//8DAAMA/v/+/wEA/v/+/wMA/v/9/wEA//8CAAMAAQAAAP//AQD+////AQADAP7//f8DAAEA///9//3/AAABAP//AwAAAAAAAAADAAMA/f/+//7/AwACAP3/AgADAAMAAAADAAAA/////wEA/v/+/wMA/v/+/wMA/f////3/AwAAAP//AwD+//7////+/wIAAgABAAAA/f8AAAIAAgADAAEA/f8AAP////8DAAMAAgD///7/AwD+/wIAAgAAAAIA/f8DAAMAAAAAAAEAAwD9//7//v8DAAAAAgD9////AgABAAAA/v8BAP///f/+//7/AAABAP3//v8AAP//AgACAAEAAgABAAAAAAABAAAAAwADAP3/AgAAAAMA/v8AAP7//f///wAAAQAAAAIA/f/+/wEA//8AAAEAAAD//wEAAwADAP3///8DAP7/AQACAAEAAwD//wIAAgD9/wEAAgACAP3/AwD//wAA//8DAP3////+/wMA/f8AAAIAAAD9/wAAAQACAP7/AwADAAEAAAAAAAMAAwADAP7/AQD9/wAAAwD9/wAAAQD9//7/AgD9/wAA/f///wEA/f///wMA/f/9//3/AwD9/wEA/////////f8BAAAAAQD//wMA//8DAAMA/v8CAP//AQD+////AQD+//7/AgADAAIA/v//////AwABAP//AgD//wEA/f8CAAAA//8DAAIAAwD+//7//v8DAP7//f///wAA/v/+//7/AwABAAMAAwADAAEA/f///wAAAgD+//7//f8AAP7/AAADAP3/AgD//wMA/v8CAAIA//8BAAMAAgAAAP///f/9//3/AwD+//3/AQAAAAIAAwABAAAA/f8BAP7/AAAAAAEA/f/+//3//v////7/AQABAP////////////////3//f8DAP3/AgADAAMAAAD9//7//f///wAAAgD///3//v8CAAMA/f/+//3//v8CAP7/AQABAAIAAgD9/wAAAgD9/wEA/v8DAAAA/v8DAAEA/f/+//7//f/9/wMA/v///wEA/f8BAAEA///+/wAA/f8BAP///////wEAAAADAAAAAQABAAEAAAD///3//v8DAAAAAQAAAP7/AQD+/wEA/f8BAP3/AwD///7//v///wAA/f8AAAIAAwABAAAAAwABAAMA/f8DAAIA/f/+/wEAAAABAAAAAQD//wEA/f/+//7///8CAAAA//8BAP3/AQD///7/AQABAAIAAQD+//7//f/+/wAA/v/9/wIAAwAAAP///f/+/wMA/f8DAP3/AgABAAAAAAD+/wMA/v8BAAAAAwACAP3/AwACAAAAAwD+//3//v///wEAAAAAAAEAAgD//wAAAwADAAEA/v8DAAAA//8AAP//AAADAAEA/v8AAAEAAwD9//7/AgADAAEAAgADAP///f/9/wAAAQAAAP3/AwAAAP3/AgACAAMA/v8AAP//AQD9////AgD9////AwABAAEAAwABAAMA///+/wEA/v8AAAIA//8CAAAAAgD+/wAAAgAAAP3/AQD///3///////3/AQD9////AgABAAIA/v/+////AgD9//7/AAD//wAAAgADAAMAAAADAAMAAgAAAAIAAgADAAMA/f8BAAAAAQD9/wIA/f/9//3////9///////+/wEAAAABAAIAAgD///3/AAADAP///v8DAP7///8CAAMAAgD9//3/AAABAP7/AAD+//7//v/9/wAA/f/+/////f8AAAEAAwABAAEA/v/9/wMAAAD+/wMA//8CAAEAAAD+/wMA/f8BAAMAAgAAAAAAAAABAAAA//8AAP//AQD9//3/AAADAAIAAgAAAP7/AAD+/wMAAQABAAMAAQACAAEAAQD+////AAACAAAA/////wIAAAADAAAAAQAAAP///v///wEAAQADAAIAAgABAP7////9/wMAAgD9////AgAAAP7///8DAAMAAQD//wAA/f/+/wMAAAD9//7//v/9/wAA/f/+//3//f8AAAEAAgACAAAAAwD9//3////9/wEAAAACAAIA/v///wEAAAD9//////8DAAAAAgAAAP///f/+/wMAAgAAAAEA//8AAAAAAgACAAIAAAABAP///v/+/wMA/f//////AAD9/wIAAQADAP//AQD+//7/AwACAAMAAgD9/wEA/v8AAAIA/v///wEAAQACAAIA/v8DAP7////+/wMAAgD+/wIAAAAAAAAA//8CAAMA/f8BAP3//f////7//v/+/wAAAAABAAEA//8AAAEAAwD//wAA///9/wEAAQD9/wMA/v8DAAEAAgAAAP7//f/9//3//f/+/////v8CAAAAAAACAAEAAQD//wIAAwACAP//AQAAAAMA/f8CAAAAAAD+//3/AgACAP///v8CAAEA/f8CAAIAAAACAP3//////wMAAgADAP3/AgABAAAA//8BAP3/AwABAP//AgADAAAAAgADAAIA/f8BAAMAAgAAAAMAAgACAAIA/f8AAAAAAgD9/wMAAQD9//3/AwABAAEAAAADAP///v8AAAIA/f/+/wMA//8BAAIAAQAAAAMAAgD+/wMAAQAAAAIA//8BAAMAAQD//wIAAgD9/wMAAAABAAEAAAD+/////v8AAAAAAQABAAIA/v8BAAIA/f8BAAEAAQAAAP//AAAAAAIA/f8DAAIAAgD///7/AwACAP//AAD///3////9//3/AwACAAMAAwD9/wAA/v8AAP7/AwD+//3//v/9//3/AwD9/wIA/f8BAAIA/f/9////AAD+/wMA///9//3/AwADAAAAAwABAAEAAwD+//7/AQABAAAAAwD+////AwABAAAAAwABAAMAAwABAAIA/v///wEAAwD9/wIAAwADAP3//f8DAAEA///9/wAA/f/9/wMAAgD9/wIA//8BAP//AQABAAMAAwD//wAAAAD9/wMAAgD+////AgACAAMA/v8BAAEAAgD9////AwACAAAA/f8AAAMAAgD+/////f//////AwADAP7///8BAP7/AQD+/wEA/f/+/wIAAwAAAP//AgD+/wAAAgD//wAAAQAAAP3////9/wEA//8CAAEA///+//7//v8DAAIA/v8AAP////8DAP3/AAADAAEA/v8AAAMAAAD9/wEAAwADAP///f/+//3/AAAAAP7//f8CAAAAAwABAAIAAwD+//7//v//////AwACAP////8CAP//AQADAP7//f/+////AAADAAEAAQD9/////f8DAAMA/v8CAP7///8CAP7//f8AAAIA//8CAP//AwADAAMA/v/9//3/AAD//wEA//8CAAMAAAD//wEAAwACAP//AAADAAEA//8DAP//AQD9/wMAAwAAAP7/AQAAAP//AwD//wIA/f/9/wEAAQD9//7/AQADAP7/AwABAAAAAwD//wAAAAABAP3//f8AAP7/AgABAP7/AwAAAAIAAAAAAP3/AAADAAIA/v8CAAIAAAD+/wIA//8BAAMA/f8DAP////8DAP7///8DAAIAAQD//wAA/v8AAP//AQD///7////9////AQADAAEA//8AAP/////+//////8DAP///v///wAAAgAAAAIAAwAAAAIA/v8AAP3//f8BAP7////9/wEAAgD///3/AAADAP3/AQACAAIA///+//3////+/wEA//8BAAAAAgD+/wEA/f/9/////f8CAAAA/f/+/wMAAgD//wMAAgABAAMA/v8DAAMAAAD//wIA/v/9//3/AAAAAAMAAQACAAIA/f8AAP//AAD9//7///8AAAEAAQAAAAEA/v8BAAEAAgD9////AwACAAAAAwACAP7/AwD+/wEAAwAAAAMA/f8DAAIAAAACAAAA/v///wMA/f////3///8DAP3//v8BAP//AwAAAAIAAAD///3///8DAP3/AAD+/wMA//8BAP7//v/9/wIAAAABAP3/AQABAP///f8CAAAA///9/////v8BAAIA/v/9//7/AwACAAIAAQACAAAAAQABAAIA/f/+/wAAAgD9/wIA/f8BAAAAAwABAAMAAwADAP7//f8CAAMAAAACAAAA/v/+//7//f8BAAAAAQABAP//AwACAAIA///+/wEAAQD//wMAAAD+/wIA//8BAP//AgD+/wIAAgD/////AQACAP//AQACAP7/AwADAP7/AQACAP3//f/+/////v8CAP///v/+/wIAAgD9/wEA/v8AAP/////+/wIA//8AAP3/AwD9/wMA/v8CAAAAAAD//wMA//8AAAMAAwD//wEA/v//////AwADAP//AAABAP7/AwABAP///v8AAP3//f////3/AwAAAP7/AAADAP///f//////AwD9/wMAAgACAAEAAAADAAAAAwADAAAAAAADAP//AQACAAAAAwD+/wIAAAADAAAA///9//3/AgD+/wIA/////wEAAAACAAAA/f8DAAMAAAD9/wAAAQD+//3//v8DAAIAAAAAAP7/AgD+//7/AQD9/wIA/////wEAAAADAAMAAwD+/wAAAgAAAAEA/v/9/wEA/v8CAP7/AwD+//3///8BAP3//f//////AwADAP7//f///wIAAgD+//7//f8CAP7/AQAAAP//AwADAP7//f/+/wMA/v8BAAAA/v8DAAAAAQADAAAA/v8BAP3/AwAAAP7//v/9/wIA/v/+//7/AQABAAIA/v8BAP///f8DAAMAAwABAP///f///wEA///+/wIAAQAAAAAAAwABAAEAAgABAP7//v8BAAEA/f8DAAAAAgAAAP///v8AAAIAAQAAAP//AgABAP7//f8DAP3///8DAAEAAAD+/wIAAgAAAAEA//////7/AAD+/wEAAAABAP//AQD+//7/AQD+/////f8DAAIA/f8CAP7/AwAAAAEA/v8CAAMA//8AAAIA/f8AAP7/AgACAP3///8CAP//AQD+/wAA/f8DAAAA//8AAP7/AgD9//7/AQD9/wIAAAD+/wMA/f8BAAAAAAD//wEAAwAAAP3/AgABAAIAAAAAAP7/AQD9/wEAAgD9/wMAAgD+/wIAAwD///3/AwD+/wAAAwACAP7/AAD+//7///8BAAAAAgD9/wEA/f/9/wIAAAADAAAA///+//3/AQAAAP7/AAD+//7//v/+/wEAAgD//wIAAgD//wAAAwADAAMAAwABAAEAAwABAP7/AwD+/////f8DAAEA/f8DAP3/AQD///3/AwABAAIA/v8AAAEA/f8AAAIA/v8DAAEA/f8DAAIA/v///wIAAgD//wAAAgD+/wAAAAADAAMA/f8DAAAA///9/////v8BAP////8DAAIA/f/9/wAAAwADAAMAAAD//wIA/v///wIAAgD+/wIA//////7//f/9//3/AgD+/wEAAAD//wIA/f///wMAAQABAP///f8CAAIA/v8DAP3//v8DAAAA/////wMAAwAAAP3/AAD9////AgAAAAMA/v/+/wEAAQAAAAEA///9//3/AwD+/wMAAAACAAMA/v////3/AQADAP7/AQACAAMAAQD+//7/AAD+/wEAAgACAP///v/+//7/AQACAP3//v8DAP3/AQD////////9//7/AgADAP3//f8DAAAAAgAAAAIAAAD//wIA/v8AAAAAAwD//wMAAAD/////AAD+/////f////7/AgADAP3/AAD9/wMA/f/9/wEAAAD9/wMAAgD+//7/AgAAAAMAAgABAAAA/v8BAAMAAwABAP///v8CAP7//v/9///////9//3/AwABAP7//v///wMAAQABAAAAAwADAAIA/f8AAAEA///+//7/AQD9////AwD+/wIAAwAAAAEA/f8AAAAA/v/9//3/AgACAP////8AAAMA//8BAP//AAABAAEAAQACAP3//v8AAP//AQACAAAA//8CAP3/AAD///3//v///wAAAgACAP7//v///wIAAQABAP3//v8DAAEA///9/wIA/f///wIAAQD9//7/AgACAAEAAAABAP7/AAAAAP3//v8AAAMA//8BAP//AgAAAP3/AQAAAP7/AgACAAEA/v8AAAAA/f8BAAIAAwD//wEAAQD+//3/AgD+//7//f////7//v8CAAEAAQACAAAAAQAAAP7/AwD+//3//v8BAAEA/f8CAP7/AwABAP3/AwD9//7/AQD///7//////wIA/v/9////AAD//wEAAwD9/wEA/f8DAAIAAAD9/wIAAgD///////8CAAIAAwAAAP//AwAAAAAA//8CAP3/AQACAAIA/f8CAP3/AAD9//7//f8CAP3//v8AAP3//v////7//////wMAAAAAAAIAAQABAAIAAQD+/wIAAAAAAP3/AgD9//3///8CAAEAAAD+/wIA//8DAAAA/v8CAAEAAgAAAAAAAwADAAIAAAD+//7/AAD9//////8AAAAAAwD//wMA/f8BAAIAAgACAAMA/f/+/wIAAAAAAP7/AAD9/wIAAwD+/wMAAgACAAAAAAD//wEA/v8DAP3/AQACAP7//f8BAAMA/v8DAAEAAQACAAAAAgD/////AAD+//3/AgAAAAAAAgACAAEA//8AAAIA//8DAP7/AwD///7/AgAAAAEAAAADAP//AgABAAAA/////wMAAAD9//3///8AAAIAAgD//wEAAwADAP7/AQD///7//v/+////AgADAP7/AAADAP3/AgAAAAAA/v/+//3//f/+/wAAAQACAAAAAwADAP7///8BAAAA///9/////v/9/wIAAAD//wIAAgD//wIAAAABAP3/AgACAAIA/v/9/wMA/v8BAAAAAwAAAP3//f///wIA//////3///8DAAAA/f//////AQACAP7///8CAP///v///wEA//8BAAMA/f8CAP3//v/+/wAA/////wMAAwAAAP7////9/wMA///9/wEAAgABAAEA/f8AAAEAAwAAAAMAAwD9/wMAAQABAAMAAwAAAP3//f8DAAEAAQD9/wMAAAD9/wAAAwD+////AQD9/wMAAAAAAAMAAQD///7//f/+/wAAAAD//wAAAgABAP3/AAAAAAEAAQD//wMA/f/9/wAA/v///wMAAwADAP7//f8AAP///f8BAAEA//8DAAIA/f8DAP7/AQD///7/AwD+////AwD9//7/AgADAP//AQABAP3/AAABAAAAAwABAAAAAAD//wEAAwACAAEAAAADAP7/AwACAAMA/v/9//7////+/wIAAgD+//7/AwADAP7/AgD+/wAAAwD+//3/AAABAAEAAAAAAAEAAgACAAAAAQACAAEAAgACAAAAAAD//wAA/v8CAAIA/v8AAP3///8BAAMA/v8AAP7//v8AAAAAAgACAP3///8CAP7/AgD+////AQADAAIAAQADAAAA///+/wMAAQACAAIA/f8CAAMAAQAAAAIAAwD9//3//f8DAP3/AgD9/wMA/f8DAP7/AQD///3//v8DAAAA//8CAP//AgD///7/AwACAP7/AAD9/////f8AAAAAAwD//wEA/f/9/wIA/f/+/wAAAwABAAIA/v/+//3/AwACAP7/AAABAP3///8CAAMAAQD//wIA//8DAP7/AAD9//3////+/wMA/f8BAP///f8DAP7////9//7///8DAAIAAwABAAAAAAD+//3//v////3/AgADAP7//v8DAAIA/v/+/wEAAQAAAP3//f8DAP7/AQD//wIAAgD+////AwD9//3////+/wAAAwADAP//AQD+/////v///wMAAQD9////AQD9/wMAAwD+/wAAAAACAAMA/f/9/wMAAAAAAAIA/f///wIAAAAAAP///v/+/wAAAwABAAMA/v8BAAIAAwABAAIA/v/+/wAAAgACAP7/AgD//wAA/v/9//7/AwD9/////f8CAP3//v8AAP//AgAAAAAAAAADAAAAAgABAAIAAQACAAIAAAD///3//v8CAP///v8DAAEAAwACAP3/AwADAAAAAwD+/////f8DAP3/AwACAAIA/v/+/wIAAwADAAAA/v///wMA//8CAAMA///+//3/AgADAP7/AQD//////v8DAAIAAgD9//3///8CAP7/AgABAAMAAAADAAAAAAADAAMAAgD9//7/AQD///3//f/+//7//v8AAP7/AgAAAAAAAQD///3//f8DAAEAAAADAAMAAwABAP////8CAP//AgADAP/////9/wMA/f8AAP/////9/wIAAwADAAEAAAD///3/AAD//wMAAgAAAAIAAAABAAEAAwABAP7//v8BAP3/AAD///7////+/wIA/f8BAP7/AAAAAAEA//8BAAIA/v/9/////v8CAP//AQADAP7/AAADAAAA/f/+////AQD+//7/AAD9/wAAAQACAAAAAwABAAIA/f8AAP3/AgADAAIA//8AAAAA/f8CAAEAAAADAAMAAAD9/wMA//8BAP3/////////AQD9//7/AQD9//7///8CAP3//v///wIAAAABAAMA/v/9/wEAAAABAP3/AAD//wIAAwD+/wMAAAAAAAEA//8CAP//AAABAP3/AQD+//3/AgD9//7/AQABAAMAAgD//wAAAQD+/wMAAwD+/wIA/v8AAAMA/f/9////AgACAAIAAwD//wIA//8CAP///////wAAAAAAAAAA/////wEAAgAAAP7/AwD+/wIAAAD//wIAAgD//wAAAQAAAAEA/f///wEAAwAAAP//AAD+/wAA/v8CAAIAAAADAP7//v///wMA/f8CAAEAAQABAP///v8DAAAAAgAAAP/////+/wEA/f8DAAIAAAD///3/AwD//wAAAgAAAAAAAwD9/wAA//8AAAEA/v////7//v8CAAAA/f/9/wMA///+/wAAAgABAAMAAAADAAEA/v8AAAMA/v8DAP3//v8CAAAA//8CAAIA//8AAP///f8AAP3//v/9/wEA//8AAAMA///+////AwAAAP//AwAAAP//AwACAAIA///9/wIA///9/wMA///+/wIAAQD9/wEAAwACAP///f///////f8AAAAA//8BAP/////+/wAA/f/9/wAAAAD///3/AwAAAAIA/v/+/////v/+/wAAAwD+///////+/wIAAwACAAIA/v8BAP3/AQAAAAMA//8CAAIAAAAAAAAA//8AAAAA/f/+/////f////3/AgAAAAEAAgACAAAA///+//7//f8DAP//AAAAAAAA//8AAAEA/f8AAAEA//8CAAEAAwACAP3/AgABAAMAAwD+/wAA/f8CAP7/AwAAAP3/AAACAAEA/v/+//3/AQACAAEA/f8DAP3//f8CAP///f8CAAEAAQACAP//AAACAAAA/f8AAAMAAwADAAMAAgAAAP//AgADAAAAAAAAAAEAAQABAP7/AAABAAAAAAADAP3//////wIAAwD+////AgD9//3/AwD+/wIAAgD9//3///////3//v8AAAAAAQD9/wAAAQABAAAA/f8DAAIAAAD9//3//v/+/wMAAQAAAAIAAAD///7///8BAP7/AQABAAMA/v8BAP7/AwD+/wEA/v8CAAMA/v/9/wMA/v8AAAEAAAADAP//AAACAAAAAQD9/wAA/v8CAAAAAwADAP//AQD9/wMAAQADAP///f8DAAEAAwADAAMAAwADAAMA/v8AAP///v8BAAAAAQADAAMAAQD//////f8CAAIAAgD9/wIA//8AAAAA//8AAAIAAQAAAAAAAAABAP3/AwD9/wMAAAADAP//AwD+//3//f////3/AgD+/wIAAAD9//7//v8AAAIA/f/+/wIA//8DAAAAAgD///7//v/9////AgAAAAEAAQAAAAEA//8DAP7//f///wAA/v/+//7//v////3////+/wAAAgADAAMAAQADAAMA//8CAAMA/v8AAAAAAgD9/wMAAwD//wEA///+//3/AwADAAEAAQD+/wAAAQD+////AAD+/////////wMA/f/+//7////+/wIA/f/9/wIA/f8DAAAA///+/wEAAwACAP3/AgD9/wEA/v8DAP7//v/9/wAA/v/+/wAA///9/wAAAQABAP//AgD//wEA/v8BAAEAAQD9//7//f8AAAAA/v8BAP///f8CAP//AwD+////AgAAAP///f/9//3///8BAP7//f////7//f/9//3////+//3/AgD//wAAAgACAAEAAgAAAP//AQD9//7//v///wIAAgD9/wMA///+/////v8AAAAAAAD//wEAAQADAP3//v/+//3//v/9/wIA//8BAP///f/9/wEAAwABAP///v8BAP//AwACAP//AwD9//7/AgAAAP7/AAD+/wMA/v8DAP3/AAD9/wAA/v8BAP7//////wEAAQACAAEAAAADAAAA/f/9/wIA//8AAAAAAgAAAP7/AQD///7/AgD/////AgD+/wEA/f8CAAAA/////wMA/f8CAP7//v///wAA';
+document.addEventListener('DOMContentLoaded', ()=> document.body.appendChild(keepAlive));
+function sessionOn(){ try{ keepAlive.play().catch(()=>{});
+  if('mediaSession' in navigator){ try{
+    navigator.mediaSession.metadata = new MediaMetadata({ title:'Workout running', artist:'Trainer' });
+  }catch(e){} } }catch(e){} }
+function sessionOff(){ try{ keepAlive.pause(); }catch(e){} }
+
+/* canonical iOS unlock: create ctx AND push one silent buffer through it
+   inside the first real user gesture */
+function unlockAudio(){
+  ensureAudio();
+  try{ if(audioCtx){ const b=audioCtx.createBuffer(1,1,22050);
+    const s=audioCtx.createBufferSource(); s.buffer=b;
+    s.connect(audioCtx.destination); s.start(0); } }catch(e){}
+}
+['touchend','click'].forEach(ev => document.addEventListener(ev, unlockAudio, {once:true}));
+/* iOS suspends audio when the app is backgrounded — wake it on return */
+document.addEventListener('visibilitychange', ()=>{
+  if(document.visibilityState==='visible' && audioCtx && audioCtx.state==='suspended') audioCtx.resume();
+});
 
 /* ════════ RENDERING ════════ */
 const app = document.getElementById('app');
@@ -170,7 +241,7 @@ let timer = null; // active timer state
 let editFlush = null;   // set while the editor is open
 function go(view, arg){
   if(editFlush){ editFlush(); editFlush = null; }
-  if(timer){ clearInterval(timer.iv); timer=null; }
+  if(timer){ clearInterval(timer.iv); timer=null; sessionOff(); }
   if(view==='list') renderList();
   else if(view==='edit') renderEdit(arg);
   else if(view==='timer') renderTimer(arg);
@@ -186,6 +257,7 @@ function renderList(){
     <div class="sub">${exs.length===0 ? 'No exercises yet — add your first one below.'
       : exs.length+' exercise'+(exs.length>1?'s':'')+' · tap one to start its timer'}</div>
     <div id="cards"></div>
+    <button class="backup-link" id="soundBtn">Sound settings</button>
     <button class="backup-link" id="backupBtn">Backup &amp; restore workouts</button>
   </div>
   <button class="fab" id="addBtn">+ Add exercise</button>`;
@@ -222,6 +294,7 @@ function renderList(){
   });
   document.getElementById('addBtn').onclick = ()=> go('edit', blank());
   document.getElementById('backupBtn').onclick = backupModal;
+  document.getElementById('soundBtn').onclick = soundModal;
 }
 
 function confirmDelete(id){
@@ -231,6 +304,48 @@ function confirmDelete(id){
       <button class="btn grow" style="background:var(--danger);color:#fff" data-del>Delete</button></div>`,
     el => { el.querySelector('[data-del]').onclick = ()=>{
       data.exercises = data.exercises.filter(e=>e.id!==id); saveData(); closeModal(); renderList(); }; });
+}
+
+/* ── SOUND SETTINGS ── */
+function soundModal(){
+  const s = data.settings;
+  modal(`<h3>Sound</h3>
+    <p>Tap a cue to hear it. Keep the ring/silent switch on <b>ring</b> — iOS mutes web audio in silent mode.</p>
+    <div class="seg" style="margin-bottom:14px">
+      <button id="s-on">Sound on</button><button id="s-off">Muted</button></div>
+    <div class="label">Volume</div>
+    <input type="range" id="s-vol" min="0.1" max="1" step="0.1" style="padding:0;margin-bottom:16px">
+    <div class="seg" style="margin-bottom:16px">
+      <button id="s-half">Halfway cue on</button><button id="s-nohalf">Off</button></div>
+    <div class="label">Test cues</div>
+    <div class="row" style="margin-top:0;flex-wrap:wrap;gap:8px">
+      <button class="btn ghost" style="flex:1" id="t-heavy">Heavy</button>
+      <button class="btn ghost" style="flex:1" id="t-light">Light</button>
+      <button class="btn ghost" style="flex:1" id="t-rest">Rest</button>
+      <button class="btn ghost" style="flex:1" id="t-done">Finish</button>
+    </div>
+    <div class="row"><button class="btn grow" data-x>Close</button></div>`,
+  el => {
+    const $$ = i => el.querySelector('#'+i);
+    function paint(){
+      $$('s-on').className  = s.sound ? 'on' : '';
+      $$('s-off').className = s.sound ? '' : 'on';
+      $$('s-half').className  = s.halfway ? 'on' : '';
+      $$('s-nohalf').className= s.halfway ? '' : 'on';
+      $$('s-vol').value = s.volume;
+    }
+    paint();
+    $$('s-on').onclick  = ()=>{ s.sound = true;  saveData(); paint(); ensureAudio(); sndLightStart(); };
+    $$('s-off').onclick = ()=>{ s.sound = false; saveData(); paint(); };
+    $$('s-half').onclick  = ()=>{ s.halfway = true;  saveData(); paint(); sndHalfway(); };
+    $$('s-nohalf').onclick= ()=>{ s.halfway = false; saveData(); paint(); };
+    $$('s-vol').oninput = e => { s.volume = parseFloat(e.target.value); saveData(); };
+    $$('s-vol').onchange = ()=>{ ensureAudio(); sndLightStart(); };
+    $$('t-heavy').onclick = ()=>{ ensureAudio(); sndHeavyStart(); };
+    $$('t-light').onclick = ()=>{ ensureAudio(); sndLightStart(); };
+    $$('t-rest').onclick  = ()=>{ ensureAudio(); sndRestStart(); };
+    $$('t-done').onclick  = ()=>{ ensureAudio(); sndAllDone(); };
+  });
 }
 
 /* ── BACKUP / RESTORE (also protects data across hosting moves) ── */
@@ -398,7 +513,8 @@ function renderTimer(id){
   if(!ex){ go('list'); return; }
   const plan = buildPlan(ex);
   const totalSets = ex.heavySets + ex.lightSets;
-  timer = { iv:null, step:0, remaining:plan[0]?plan[0].dur:0, running:false, done:plan.length===0 };
+  timer = { iv:null, step:0, remaining:plan[0]?plan[0].dur:0, endAt:null,
+            running:false, done:plan.length===0 };
 
   const SIZE_P=290, SIZE_L=220;
   app.innerHTML = `<div class="timer" id="tscr">
@@ -493,36 +609,62 @@ function renderTimer(id){
     $('toggle').style.background = phaseColor();
   }
 
+  /* The timer tracks a wall-clock deadline (endAt) instead of counting
+     ticks. If iOS pauses JS, the next tick catches up: phases that
+     elapsed are advanced (with their sounds) and the display lands on
+     the correct remaining time. Runs at 4Hz for responsiveness. */
   function tick(){
-    if(timer.remaining > 1){
-      if(timer.remaining <= 4) beep(660,.1);
-      timer.remaining--; draw(); return;
+    if(!timer.running) return;
+    const now = Date.now();
+    while(now >= timer.endAt){
+      const next = timer.step + 1;
+      if(next >= plan.length){ sndSetEnd(); sndAllDone();
+        stop(); timer.done = true; timer.remaining = 0; draw(); return; }
+      const nx = plan[next];
+      if(nx.kind==='work') (nx.isHeavy ? sndHeavyStart() : sndLightStart());
+      else sndRestStart();
+      timer.step = next;
+      timer.endAt += nx.dur * 1000;
     }
-    const next = timer.step+1;
-    if(next >= plan.length){ soundSetEnd(); soundAllDone();
-      stop(); timer.done=true; draw(); return; }
-    if(plan[next].kind==='work') soundSetStart(); else soundSetEnd();
-    timer.step = next; timer.remaining = plan[next].dur; draw();
+    const rem = Math.ceil((timer.endAt - now) / 1000);
+    if(rem !== timer.remaining){
+      timer.remaining = rem;
+      if(rem >= 1 && rem <= 3) sndCountTick();
+      const c0 = cur();
+      if(data.settings.halfway && c0.kind==='work' && c0.dur >= 20
+         && rem === Math.round(c0.dur/2)) sndHalfway();
+      draw();
+    }
   }
   function start(){ if(timer.running||timer.done) return; ensureAudio();
-    timer.running=true; timer.iv=setInterval(tick,1000); draw(); }
-  function stop(){ timer.running=false; if(timer.iv) clearInterval(timer.iv); timer.iv=null; }
+    timer.endAt = Date.now() + timer.remaining*1000;
+    timer.running = true; timer.iv = setInterval(tick, 250);
+    sessionOn(); draw(); }
+  function stop(){
+    if(timer.running && timer.endAt)
+      timer.remaining = Math.max(0, Math.ceil((timer.endAt - Date.now())/1000));
+    timer.running=false; if(timer.iv) clearInterval(timer.iv); timer.iv=null;
+    sessionOff(); }
 
   $('toggle').onclick = ()=>{ ensureAudio();
     if(timer.running){ stop(); draw(); }
-    else { if(timer.step===0 && timer.remaining===plan[0].dur) beep(660,.12); start(); } };
-  $('prev').onclick = ()=>{ if(timer.step>0){ ensureAudio(); timer.step--; timer.remaining=plan[timer.step].dur; timer.done=false; draw(); } };
-  $('next').onclick = ()=>{ if(timer.step<plan.length-1){ ensureAudio(); timer.step++; timer.remaining=plan[timer.step].dur; timer.done=false; draw(); } };
-  $('resetSet').onclick = ()=>{ timer.remaining = cur().dur; draw(); };
+    else { if(timer.step===0 && timer.remaining===plan[0].dur) sndPrepTick(); start(); } };
+  function jumpTo(step){ timer.step = step; timer.remaining = plan[step].dur;
+    timer.endAt = Date.now() + timer.remaining*1000; timer.done = false; draw(); }
+  $('prev').onclick = ()=>{ if(timer.step>0){ ensureAudio(); jumpTo(timer.step-1); } };
+  $('next').onclick = ()=>{ if(timer.step<plan.length-1){ ensureAudio(); jumpTo(timer.step+1); } };
+  $('resetSet').onclick = ()=>{ timer.remaining = cur().dur;
+    timer.endAt = Date.now() + timer.remaining*1000; draw(); };
 
   /* keep the screen awake during a workout where supported */
   let wakeLock=null;
   async function keepAwake(){ try{ if('wakeLock' in navigator) wakeLock = await navigator.wakeLock.request('screen'); }catch(e){} }
-  document.addEventListener('visibilitychange', ()=>{ if(document.visibilityState==='visible' && timer && timer.running) keepAwake(); });
+  document.addEventListener('visibilitychange', ()=>{
+    if(document.visibilityState==='visible' && timer && timer.running){ keepAwake(); tick(); } });
 
   draw();
   /* auto-start with the 5s get-ready lead */
-  if(plan.length>0){ beep(660,.12); start(); keepAwake(); }
+  if(plan.length>0){ sndPrepTick(); start(); keepAwake(); }
 }
 
 /* ════════ BOOT ════════ */

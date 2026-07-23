@@ -65,3 +65,33 @@ leave the editor, switch apps or close it. The small line above the buttons
 shows "Saving…" then "Saved". "Done" just returns to the list;
 "Discard changes" rolls the exercise back to how it was when you opened it
 (or removes it entirely if it was brand new).
+
+## Sounds
+Each phase has its own cue so you can train without looking at the screen:
+- Heavy set start : low two-note punch
+- Light set start : bright rising chirp
+- Set finished    : falling two-note "rack it"
+- Rest            : falling notes + soft low pad
+- Halfway through a work set (20s+) : single soft tick
+- Last 3 seconds of any phase       : short ticks
+- Workout complete: rising three-note fanfare
+
+Main screen -> "Sound settings": mute, volume, halfway cue on/off, and
+buttons to preview every cue. Settings are saved with your workouts.
+
+iPhone note: the ring/silent switch must be set to RING, otherwise iOS
+mutes all web audio.
+
+## Sound not working? / Background operation
+- The app now plays a NEAR-SILENT audio track while the timer runs. This is
+  the mechanism that (a) keeps the timer alive when you switch to another
+  app and (b) routes cues as "media" audio, which plays even with the
+  ring/silent switch on silent.
+- You may see the app in the iOS media controls while a workout runs —
+  that's expected; it's what keeps it running in the background.
+- Still silent? Check: in-app Sound settings not muted, phone volume up
+  (the side volume buttons while the app is open), and Screen Time /
+  Focus modes not restricting the site.
+- Limits: iOS can still terminate any background page under memory
+  pressure. If that happens, the timer resyncs to the correct time the
+  moment you reopen it — elapsed sets are accounted for.
