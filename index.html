@@ -107,6 +107,10 @@ h1{font-family:var(--display);font-weight:700;font-size:40px;line-height:1;lette
 .modal h3{margin:0 0 8px;font-size:17px}
 .modal p{color:var(--dim);font-size:14px;margin:0 0 20px}
 .backup-link{background:transparent;border:none;color:var(--dim);font-size:13px;text-decoration:underline;display:block;margin:24px auto 0}
+.saved{color:var(--dim);font-size:12px;letter-spacing:1px;text-transform:uppercase;text-align:center;
+  height:16px;margin-bottom:10px;opacity:0;transition:opacity .3s}
+.saved.on{opacity:1}
+.saved.ok{color:var(--rest)}
 </style>
 </head>
 <body>
@@ -163,7 +167,10 @@ document.addEventListener('touchstart', ensureAudio, {once:true, passive:true});
 const app = document.getElementById('app');
 let timer = null; // active timer state
 
-function go(view, arg){ if(timer){ clearInterval(timer.iv); timer=null; }
+let editFlush = null;   // set while the editor is open
+function go(view, arg){
+  if(editFlush){ editFlush(); editFlush = null; }
+  if(timer){ clearInterval(timer.iv); timer=null; }
   if(view==='list') renderList();
   else if(view==='edit') renderEdit(arg);
   else if(view==='timer') renderTimer(arg);
@@ -283,32 +290,66 @@ function renderEdit(ex){
     <div class="field"><div class="label" id="sets-label"></div><div id="sets"></div></div>
     <div class="field"><div class="label">Notes</div>
       <textarea id="f-notes" rows="3" placeholder="PRs, how it felt, what to change next time…"></textarea></div>
+    <div class="saved" id="savedmsg"></div>
     <div class="row">
-      <button class="btn ghost grow" id="cancel">Cancel</button>
-      <button class="btn" id="save" style="flex:2">Save exercise</button></div>
+      <button class="btn ghost grow" id="cancel">Discard changes</button>
+      <button class="btn" id="save" style="flex:2">Done</button></div>
   </div>`;
   const $ = id => document.getElementById(id);
+
+  /* ── AUTOSAVE ──────────────────────────────────────────────
+     Every change is written to storage ~0.6s after you stop
+     typing, and immediately when you leave the screen, switch
+     apps or close the tab. A new exercise starts saving as
+     soon as it has a name.                                   */
+  const snapshot = JSON.stringify(ex);   // for "Discard changes"
+  let saveTimer = null, dirty = false;
+
+  function commit(){
+    if(!ex.name.trim()) return false;    // don't store unnamed drafts
+    const i = data.exercises.findIndex(e => e.id === ex.id);
+    if(i >= 0) data.exercises[i] = JSON.parse(JSON.stringify(ex));
+    else data.exercises.push(JSON.parse(JSON.stringify(ex)));
+    saveData(); dirty = false; return true;
+  }
+  function flash(txt, ok){
+    const m = $('savedmsg'); if(!m) return;
+    m.textContent = txt; m.className = 'saved on' + (ok ? ' ok' : '');
+    clearTimeout(m._t); m._t = setTimeout(()=>{ m.className = 'saved'; }, 1600);
+  }
+  function touch(){                       // call after ANY edit
+    dirty = true;
+    const m = $('savedmsg'); if(m){ m.textContent = 'Saving…'; m.className = 'saved on'; }
+    clearTimeout(saveTimer);
+    saveTimer = setTimeout(()=>{ commit() ? flash('Saved \u2713', true) : flash('Add a name to save'); }, 600);
+  }
+  function flush(){                       // save right now, no waiting
+    clearTimeout(saveTimer);
+    if(dirty) commit();
+  }
+  editFlush = flush;                      // used by go() and page-exit events
+
   $('f-name').value = ex.name; $('f-desc').value = ex.description; $('f-notes').value = ex.notes;
   $('f-work').value = ex.workSec; $('f-rest').value = ex.restSec;
   function commitSec(id, key){ const el=$(id);
-    el.onblur = ()=>{ const n=Math.min(3600,Math.max(5,parseInt(el.value,10)||5)); el.value=n; ex[key]=n; }; }
+    el.onblur = ()=>{ const n=Math.min(3600,Math.max(5,parseInt(el.value,10)||5)); el.value=n; ex[key]=n; touch(); }; }
   commitSec('f-work','workSec'); commitSec('f-rest','restSec');
-  $('f-name').oninput = e=> ex.name = e.target.value;
-  $('f-desc').oninput = e=> ex.description = e.target.value;
-  $('f-notes').oninput = e=> ex.notes = e.target.value;
+  $('f-name').oninput = e=>{ ex.name = e.target.value; touch(); };
+  $('f-desc').oninput = e=>{ ex.description = e.target.value; touch(); };
+  $('f-notes').oninput = e=>{ ex.notes = e.target.value; touch(); };
 
   function drawMode(){ $('m-w').className = ex.mode==='weights'?'on':''; $('m-r').className = ex.mode==='run'?'on':''; drawSets(); }
-  $('m-w').onclick = ()=>{ ex.mode='weights'; drawMode(); };
-  $('m-r').onclick = ()=>{ ex.mode='run'; drawMode(); };
+  $('m-w').onclick = ()=>{ ex.mode='weights'; drawMode(); touch(); };
+  $('m-r').onclick = ()=>{ ex.mode='run'; drawMode(); touch(); };
 
   function drawCounts(){ $('h-val').textContent = ex.heavySets; $('l-val').textContent = ex.lightSets;
     const n = ex.heavySets+ex.lightSets;
     ex.setValues = resizeVals(ex.setValues, n);
     ex.setReps = resizeVals(ex.setReps||[], n); drawSets(); }
-  $('h+').onclick = ()=>{ ex.heavySets++; drawCounts(); };
-  $('h-').onclick = ()=>{ if(ex.heavySets>0){ ex.heavySets--; drawCounts(); } };
-  $('l+').onclick = ()=>{ ex.lightSets++; drawCounts(); };
-  $('l-').onclick = ()=>{ if(ex.lightSets>0){ ex.lightSets--; drawCounts(); } };
+  $('h+').onclick = ()=>{ ex.heavySets++; drawCounts(); touch(); };
+  $('h-').onclick = ()=>{ if(ex.heavySets>0){ ex.heavySets--; drawCounts(); touch(); } };
+  $('l+').onclick = ()=>{ ex.lightSets++; drawCounts(); touch(); };
+  $('l-').onclick = ()=>{ if(ex.lightSets>0){ ex.lightSets--; drawCounts(); touch(); } };
 
   function drawSets(){
     const unit = ex.mode==='run'?'km':'kg';
@@ -322,19 +363,24 @@ function renderEdit(ex){
         <input type="number" inputmode="numeric" class="reps" placeholder="reps"><span class="unit">×</span>`;
       const [inp, rinp] = row.querySelectorAll('input');
       inp.value = ex.setValues[i];
-      inp.oninput = e => ex.setValues[i] = e.target.value;
+      inp.oninput = e => { ex.setValues[i] = e.target.value; touch(); };
       rinp.value = (ex.setReps||[])[i] || '';
-      rinp.oninput = e => ex.setReps[i] = e.target.value;
+      rinp.oninput = e => { ex.setReps[i] = e.target.value; touch(); };
       box.appendChild(row);
     }
   }
   drawMode(); drawCounts();
 
-  $('cancel').onclick = ()=> go('list');
-  $('save').onclick = ()=>{ if(!ex.name.trim()) { $('f-name').focus(); return; }
-    const i = data.exercises.findIndex(e=>e.id===ex.id);
-    if(i>=0) data.exercises[i]=ex; else data.exercises.push(ex);
-    saveData(); go('list'); };
+  $('cancel').onclick = ()=>{
+    clearTimeout(saveTimer); dirty = false; editFlush = null;
+    const orig = JSON.parse(snapshot);
+    const i = data.exercises.findIndex(e => e.id === ex.id);
+    if(isNew){ if(i >= 0) data.exercises.splice(i,1); }   // remove autosaved draft
+    else if(i >= 0) data.exercises[i] = orig;             // roll back to how it was
+    saveData(); go('list');
+  };
+  $('save').onclick = ()=>{ if(!ex.name.trim()){ $('f-name').focus(); flash('Add a name to save'); return; }
+    flush(); editFlush = null; go('list'); };
 }
 
 /* ── TIMER (5s get-ready, then work/rest cycles; auto-starts) ── */
@@ -480,6 +526,13 @@ function renderTimer(id){
 }
 
 /* ════════ BOOT ════════ */
+/* never lose an in-progress edit when iOS suspends or closes the app */
+addEventListener('pagehide', ()=>{ if(editFlush) editFlush(); });
+addEventListener('beforeunload', ()=>{ if(editFlush) editFlush(); });
+document.addEventListener('visibilitychange', ()=>{
+  if(document.visibilityState === 'hidden' && editFlush) editFlush();
+});
+
 renderList();
 if('serviceWorker' in navigator){
   addEventListener('load', ()=> navigator.serviceWorker.register('sw.js').catch(()=>{}));

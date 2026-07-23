@@ -58,3 +58,10 @@ iOS captures the icon ONLY at the moment you tap "Add to Home Screen".
    https://YOURNAME.github.io/REPO/icon-180.png in the browser —
    you must see the photo. If you see 404, the upload didn't work.
 3. Delete the old home-screen icon, reload the app page, add it again.
+
+## Autosave
+Edits save themselves ~0.6s after you stop typing, and instantly when you
+leave the editor, switch apps or close it. The small line above the buttons
+shows "Saving…" then "Saved". "Done" just returns to the list;
+"Discard changes" rolls the exercise back to how it was when you opened it
+(or removes it entirely if it was brand new).
