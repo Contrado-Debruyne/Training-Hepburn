@@ -5,7 +5,7 @@
    3. Upload the changed files
    Workouts are stored in localStorage, which this worker NEVER touches.
    Only the cached app files are replaced on update.                    */
-const CACHE = 'trainer-v6';
+const CACHE = 'trainer-v7';
 const FILES = ['./', './index.html', './manifest.webmanifest', './icon-180.png', './icon-512.png', './apple-touch-icon.png'];
 
 self.addEventListener('install', e => {
