@@ -102,3 +102,10 @@ SPRINTS with its own stepper, choose the distance unit (m or km), and enter
 a distance per sprint. Reps fields are hidden for runs. Existing run
 exercises are migrated automatically: their old heavy+light count becomes
 the sprint count.
+
+## YouTube videos
+Each exercise can hold any number of YouTube links (editor -> "YouTube
+videos" -> + Add video link). They appear as tappable pills on the
+exercise card and on the timer screen, opening in YouTube - handy for
+checking form during rest. The background audio session keeps your timer
+running while you watch. Empty link rows are cleaned up automatically.

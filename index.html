@@ -111,6 +111,11 @@ h1{font-family:var(--display);font-weight:700;font-size:40px;line-height:1;lette
   height:16px;margin-bottom:10px;opacity:0;transition:opacity .3s}
 .saved.on{opacity:1}
 .saved.ok{color:var(--rest)}
+.vidrow{display:flex;gap:8px;flex-wrap:wrap;margin-top:10px}
+.vidlink{font-size:13px;color:var(--light);border:1px solid var(--line);border-radius:999px;
+  padding:5px 12px;text-decoration:none;background:var(--surface2)}
+.vx{width:44px;height:44px;flex:0 0 44px;border-radius:12px;border:1px solid var(--line);
+  background:transparent;color:var(--danger);font-size:20px}
 input[type=range]{-webkit-appearance:none;background:transparent;padding:0;border:none;height:28px}
 input[type=range]::-webkit-slider-runnable-track{height:6px;border-radius:999px;background:var(--line)}
 input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:24px;height:24px;border-radius:999px;
@@ -125,7 +130,7 @@ input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:24px;heigh
    When a future app version needs a new shape, add a step to migrate():
    data is upgraded in place, never discarded.                            */
 const KEY = 'trainer.data';            // ← never change this key
-const SCHEMA_VERSION = 4;
+const SCHEMA_VERSION = 5;
 
 function migrate(d){
   if (!d || typeof d !== 'object') return { schemaVersion: SCHEMA_VERSION, exercises: [] };
@@ -146,6 +151,10 @@ function migrate(d){
     });
     d.schemaVersion = 4;
   }
+  if (d.schemaVersion === 4){
+    (d.exercises||[]).forEach(e => { if(!Array.isArray(e.videos)) e.videos = []; });
+    d.schemaVersion = 5;
+  }
   if (!d.settings) d.settings = { sound: true, volume: 0.8, halfway: true };
   /* future upgrades go here following the same pattern */
   return d;
@@ -161,7 +170,7 @@ const uid = () => Math.random().toString(36).slice(2,10);
 const blank = () => ({ id: uid(), name:'', description:'', mode:'weights',
   heavySets:3, lightSets:2, sprints:4, distanceUnit:'km',
   setValues:['','','','',''], setReps:['','','','',''],
-  workSec:45, restSec:60, notes:'' });
+  videos:[], workSec:45, restSec:60, notes:'' });
 const totalSetsOf = ex => ex.mode==='run' ? (ex.sprints||0) : ex.heavySets+ex.lightSets;
 const unitOf = ex => ex.mode==='run' ? (ex.distanceUnit||'km') : 'kg';
 const resizeVals = (v,n) => { const o=v.slice(0,n); while(o.length<n) o.push(''); return o; };
@@ -269,7 +278,7 @@ function renderList(){
       : exs.length+' exercise'+(exs.length>1?'s':'')+' · tap one to start its timer'}</div>
     <div id="cards"></div>
     <button class="backup-link" id="soundBtn">Sound settings</button>
-    <div style="text-align:center;color:var(--line);font-size:11px;margin-top:18px">app version 8</div>
+    <div style="text-align:center;color:var(--line);font-size:11px;margin-top:18px">app version 9</div>
     <button class="backup-link" id="backupBtn">Backup &amp; restore workouts</button>
   </div>
   <button class="fab" id="addBtn">+ Add exercise</button>`;
@@ -293,6 +302,9 @@ function renderList(){
         <div class="chips">${chips}</div>
         ${ex.notes?`<div class="card-notes">${esc(ex.notes)}</div>`:''}
       </div>
+      ${(()=>{const vs=(ex.videos||[]).filter(u=>u&&u.trim());
+        return vs.length?`<div class="vidrow">${vs.map((u,i)=>
+          `<a class="vidlink" href="${esc(u)}" target="_blank" rel="noopener">▶ Video ${i+1}</a>`).join('')}</div>`:'';})()}
       <div class="row">
         <button class="btn grow start">Start timer</button>
         <button class="btn ghost edit">Edit</button>
@@ -422,6 +434,9 @@ function renderEdit(ex){
         <input id="f-rest" type="number" inputmode="numeric" min="5" max="3600"></div>
     </div>
     <div class="field"><div class="label" id="sets-label"></div><div id="sets"></div></div>
+    <div class="field"><div class="label">YouTube videos</div>
+      <div id="vids"></div>
+      <button class="btn ghost" id="vid-add" style="width:100%">+ Add video link</button></div>
     <div class="field"><div class="label">Notes</div>
       <textarea id="f-notes" rows="3" placeholder="PRs, how it felt, what to change next time…"></textarea></div>
     <div class="saved" id="savedmsg"></div>
@@ -441,9 +456,11 @@ function renderEdit(ex){
 
   function commit(){
     if(!ex.name.trim()) return false;    // don't store unnamed drafts
+    const clean = JSON.parse(JSON.stringify(ex));
+    clean.videos = (clean.videos||[]).filter(u => u && u.trim());
     const i = data.exercises.findIndex(e => e.id === ex.id);
-    if(i >= 0) data.exercises[i] = JSON.parse(JSON.stringify(ex));
-    else data.exercises.push(JSON.parse(JSON.stringify(ex)));
+    if(i >= 0) data.exercises[i] = clean;
+    else data.exercises.push(clean);
     saveData(); dirty = false; return true;
   }
   function flash(txt, ok){
@@ -524,7 +541,22 @@ function renderEdit(ex){
       box.appendChild(row);
     }
   }
-  drawMode(); drawCounts();
+  function drawVids(){
+    const box = $('vids'); box.innerHTML = '';
+    (ex.videos = ex.videos || []).forEach((u, i) => {
+      const row = document.createElement('div'); row.className = 'setrow';
+      row.innerHTML = `<input type="url" inputmode="url" autocapitalize="off"
+        placeholder="https://youtube.com/watch?v=…"><button class="vx">×</button>`;
+      const inp = row.querySelector('input'); inp.value = u;
+      inp.oninput = e => { ex.videos[i] = e.target.value; touch(); };
+      row.querySelector('.vx').onclick = () => { ex.videos.splice(i,1); drawVids(); touch(); };
+      box.appendChild(row);
+    });
+  }
+  $('vid-add').onclick = () => { (ex.videos = ex.videos || []).push(''); drawVids(); touch();
+    const last = $('vids').querySelector('.setrow:last-child input'); if(last) last.focus(); };
+
+  drawMode(); drawCounts(); drawVids();
 
   $('cancel').onclick = ()=>{
     clearTimeout(saveTimer); dirty = false; editFlush = null;
@@ -561,6 +593,9 @@ function renderTimer(id){
   app.innerHTML = `<div class="timer" id="tscr">
     <div class="t-top"><button class="t-back" id="back">← Back</button>
       <div class="t-name">${esc(ex.name)}</div></div>
+    ${(()=>{const vs=(ex.videos||[]).filter(u=>u&&u.trim());
+      return vs.length?`<div class="vidrow" style="justify-content:center">${vs.map((u,i)=>
+        `<a class="vidlink" href="${esc(u)}" target="_blank" rel="noopener">▶ Video ${i+1}</a>`).join('')}</div>`:'';})()}
     <div class="t-main" id="tmain">
       <div class="ringwrap" id="ringwrap">
         <svg id="ringsvg" width="290" height="290" style="transform:rotate(-90deg)">
