@@ -109,3 +109,15 @@ videos" -> + Add video link). They appear as tappable pills on the
 exercise card and on the timer screen, opening in YouTube - handy for
 checking form during rest. The background audio session keeps your timer
 running while you watch. Empty link rows are cleaned up automatically.
+
+## Workouts
+Build named workouts of multiple exercises performed back to back:
+main screen -> "+ New workout" -> name it, set the rest between exercises,
+then add exercises (pick existing ones or create new ones on the spot,
+reordering with the arrows). Each exercise keeps its own sets, reps,
+work/rest timers, equipment note, and YouTube videos. The runner chains
+everything: get-ready -> exercise 1's sets -> "Next: ..." rest -> exercise
+2's sets -> ... -> finish fanfare. The header shows which exercise you're
+on (e.g. "Squats - 2/5") and the video pills switch to the current
+exercise. An "Equipment (optional)" field was added to every exercise for
+non-weight gear (bands, kettlebells, bodyweight...).

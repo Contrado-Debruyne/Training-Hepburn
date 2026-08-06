@@ -130,7 +130,7 @@ input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:24px;heigh
    When a future app version needs a new shape, add a step to migrate():
    data is upgraded in place, never discarded.                            */
 const KEY = 'trainer.data';            // ← never change this key
-const SCHEMA_VERSION = 5;
+const SCHEMA_VERSION = 6;
 
 function migrate(d){
   if (!d || typeof d !== 'object') return { schemaVersion: SCHEMA_VERSION, exercises: [] };
@@ -155,6 +155,12 @@ function migrate(d){
     (d.exercises||[]).forEach(e => { if(!Array.isArray(e.videos)) e.videos = []; });
     d.schemaVersion = 5;
   }
+  if (d.schemaVersion === 5){
+    (d.exercises||[]).forEach(e => { if(e.equipment == null) e.equipment = ''; });
+    d.workouts = d.workouts || [];
+    d.schemaVersion = 6;
+  }
+  if (!Array.isArray(d.workouts)) d.workouts = [];
   if (!d.settings) d.settings = { sound: true, volume: 0.8, halfway: true };
   /* future upgrades go here following the same pattern */
   return d;
@@ -170,7 +176,8 @@ const uid = () => Math.random().toString(36).slice(2,10);
 const blank = () => ({ id: uid(), name:'', description:'', mode:'weights',
   heavySets:3, lightSets:2, sprints:4, distanceUnit:'km',
   setValues:['','','','',''], setReps:['','','','',''],
-  videos:[], workSec:45, restSec:60, notes:'' });
+  videos:[], equipment:'', workSec:45, restSec:60, notes:'' });
+const blankWorkout = () => ({ id: uid(), name:'', betweenSec:90, items:[] });
 const totalSetsOf = ex => ex.mode==='run' ? (ex.sprints||0) : ex.heavySets+ex.lightSets;
 const unitOf = ex => ex.mode==='run' ? (ex.distanceUnit||'km') : 'kg';
 const resizeVals = (v,n) => { const o=v.slice(0,n); while(o.length<n) o.push(''); return o; };
@@ -260,10 +267,12 @@ document.addEventListener('visibilitychange', ()=>{
 const app = document.getElementById('app');
 let timer = null; // active timer state
 
-let editFlush = null;   // set while the editor is open
+let editFlush = null;   // set while an editor is open
+let afterEdit = null;   // exercise editor opened from the workout builder
 function go(view, arg){
   if(editFlush){ editFlush(); editFlush = null; }
   if(timer){ clearInterval(timer.iv); timer=null; sessionOff(); }
+  if(view==='wedit'){ renderWorkoutEdit(arg); window.scrollTo(0,0); return; }
   if(view==='list') renderList();
   else if(view==='edit') renderEdit(arg);
   else if(view==='timer') renderTimer(arg);
@@ -276,14 +285,46 @@ function renderList(){
   app.innerHTML = `
   <div class="screen list-screen">
     <h1>Today's work</h1>
-    <div class="sub">${exs.length===0 ? 'No exercises yet — add your first one below.'
-      : exs.length+' exercise'+(exs.length>1?'s':'')+' · tap one to start its timer'}</div>
+    <div class="sub">${exs.length===0 && data.workouts.length===0
+      ? 'No exercises yet — add your first one below.'
+      : 'Tap a workout or exercise to start its timer'}</div>
+    <div class="label" style="margin-bottom:10px">Workouts</div>
+    <div id="wcards"></div>
+    <button class="btn ghost" id="woAdd" style="width:100%;margin:2px 0 26px">+ New workout</button>
+    <div class="label" style="margin-bottom:10px">Exercises</div>
     <div id="cards"></div>
     <button class="backup-link" id="soundBtn">Sound settings</button>
-    <div style="text-align:center;color:var(--line);font-size:11px;margin-top:18px">app version 10</div>
+    <div style="text-align:center;color:var(--line);font-size:11px;margin-top:18px">app version 11</div>
     <button class="backup-link" id="backupBtn">Backup &amp; restore workouts</button>
   </div>
   <button class="fab" id="addBtn">+ Add exercise</button>`;
+  /* workout cards */
+  const wcards = document.getElementById('wcards');
+  data.workouts.forEach(w => {
+    const wexs = w.items.map(id => data.exercises.find(e=>e.id===id)).filter(Boolean);
+    const card = document.createElement('div');
+    card.className = 'card';
+    card.innerHTML = `
+      <div class="tap" style="cursor:pointer">
+        <div class="card-head"><div class="card-name">${esc(w.name)||'Untitled workout'}</div>
+          <div class="card-time">${wexs.length} exercise${wexs.length===1?'':'s'}</div></div>
+        ${wexs.length?`<div class="card-desc">${wexs.map(e=>esc(e.name)).join(' → ')}</div>`
+          :'<div class="card-desc">Empty — tap Edit to add exercises</div>'}
+      </div>
+      <div class="row">
+        ${wexs.length?'<button class="btn grow start">Start workout</button>':''}
+        <button class="btn ghost edit">Edit</button>
+        <button class="btn ghost danger del">Delete</button>
+      </div>`;
+    const start = ()=>{ if(wexs.length){ ensureAudio(); go('timer', {wo:w.id}); } };
+    card.querySelector('.tap').onclick = start;
+    const sb = card.querySelector('.start'); if(sb) sb.onclick = start;
+    card.querySelector('.edit').onclick = ()=> go('wedit', JSON.parse(JSON.stringify(w)));
+    card.querySelector('.del').onclick = ()=> confirmDeleteWorkout(w.id);
+    wcards.appendChild(card);
+  });
+  document.getElementById('woAdd').onclick = ()=> go('wedit', blankWorkout());
+
   const cards = document.getElementById('cards');
   exs.forEach(ex => {
     const total = totalSetsOf(ex);
@@ -301,6 +342,7 @@ function renderList(){
         <div class="card-head"><div class="card-name">${esc(ex.name)||'Untitled'}</div>
           <div class="card-time">${fmt(ex.workSec)} / ${fmt(ex.restSec)}</div></div>
         ${ex.description?`<div class="card-desc">${esc(ex.description)}</div>`:''}
+        ${ex.equipment?`<div class="card-desc">⚙ ${esc(ex.equipment)}</div>`:''}
         <div class="chips">${chips}</div>
         ${ex.notes?`<div class="card-notes">${esc(ex.notes)}</div>`:''}
       </div>
@@ -312,7 +354,7 @@ function renderList(){
         <button class="btn ghost edit">Edit</button>
         <button class="btn ghost danger del">Delete</button>
       </div>`;
-    const start = ()=>{ ensureAudio(); go('timer', ex.id); };
+    const start = ()=>{ ensureAudio(); go('timer', {ex:ex.id}); };
     card.querySelector('.tap').onclick = start;
     card.querySelector('.start').onclick = start;
     card.querySelector('.edit').onclick = ()=> go('edit', JSON.parse(JSON.stringify(ex)));
@@ -330,7 +372,18 @@ function confirmDelete(id){
       <button class="btn ghost grow" data-x>Keep it</button>
       <button class="btn grow" style="background:var(--danger);color:#fff" data-del>Delete</button></div>`,
     el => { el.querySelector('[data-del]').onclick = ()=>{
-      data.exercises = data.exercises.filter(e=>e.id!==id); saveData(); closeModal(); renderList(); }; });
+      data.exercises = data.exercises.filter(e=>e.id!==id);
+      data.workouts.forEach(w => { w.items = w.items.filter(x=>x!==id); });
+      saveData(); closeModal(); renderList(); }; });
+}
+
+function confirmDeleteWorkout(id){
+  modal(`<h3>Delete this workout?</h3><p>The exercises inside it are kept — only the workout is removed.</p>
+    <div class="row" style="margin-top:0">
+      <button class="btn ghost grow" data-x>Keep it</button>
+      <button class="btn grow" style="background:var(--danger);color:#fff" data-del>Delete</button></div>`,
+    el => { el.querySelector('[data-del]').onclick = ()=>{
+      data.workouts = data.workouts.filter(w=>w.id!==id); saveData(); closeModal(); renderList(); }; });
 }
 
 /* ── SOUND SETTINGS ── */
@@ -444,6 +497,8 @@ function renderEdit(ex){
         <input id="f-rest" type="number" inputmode="numeric" min="5" max="3600"></div>
     </div>
     <div class="field"><div class="label" id="sets-label"></div><div id="sets"></div></div>
+    <div class="field"><div class="label">Equipment (optional)</div>
+      <input id="f-equip" placeholder="e.g. bodyweight, resistance band, kettlebell"></div>
     <div class="field"><div class="label">YouTube videos</div>
       <div id="vids"></div>
       <button class="btn ghost" id="vid-add" style="width:100%">+ Add video link</button></div>
@@ -491,6 +546,8 @@ function renderEdit(ex){
   editFlush = flush;                      // used by go() and page-exit events
 
   $('f-name').value = ex.name; $('f-desc').value = ex.description; $('f-notes').value = ex.notes;
+  $('f-equip').value = ex.equipment || '';
+  $('f-equip').oninput = e=>{ ex.equipment = e.target.value; touch(); };
   $('f-work').value = ex.workSec; $('f-rest').value = ex.restSec;
   function commitSec(id, key){ const el=$(id);
     el.onblur = ()=>{ const n=Math.min(3600,Math.max(5,parseInt(el.value,10)||5)); el.value=n; ex[key]=n; touch(); }; }
@@ -574,38 +631,172 @@ function renderEdit(ex){
     const i = data.exercises.findIndex(e => e.id === ex.id);
     if(isNew){ if(i >= 0) data.exercises.splice(i,1); }   // remove autosaved draft
     else if(i >= 0) data.exercises[i] = orig;             // roll back to how it was
-    saveData(); go('list');
+    saveData();
+    const cb = afterEdit; afterEdit = null;
+    if(cb) cb(null); else go('list');
   };
   $('save').onclick = ()=>{ if(!ex.name.trim()){ $('f-name').focus(); flash('Add a name to save'); return; }
+    flush(); editFlush = null;
+    const cb = afterEdit; afterEdit = null;
+    if(cb) cb(ex.id); else go('list'); };
+}
+
+/* ── WORKOUT BUILDER ── */
+function renderWorkoutEdit(w){
+  const isNew = !data.workouts.some(x => x.id === w.id);
+  app.innerHTML = `<div class="screen">
+    <h1 style="font-size:34px;margin-bottom:20px">${isNew?'New workout':'Edit workout'}</h1>
+    <div class="field"><div class="label">Workout name</div>
+      <input id="w-name" placeholder="e.g. Upper body Monday"></div>
+    <div class="field"><div class="label">Rest between exercises (seconds)</div>
+      <input id="w-between" type="number" inputmode="numeric" min="5" max="3600"></div>
+    <div class="field"><div class="label">Exercises — performed in this order</div>
+      <div id="w-items"></div>
+      <button class="btn ghost" id="w-add" style="width:100%">+ Add exercise</button></div>
+    <div class="saved" id="savedmsg"></div>
+    <div class="row">
+      <button class="btn ghost grow" id="cancel">Discard changes</button>
+      <button class="btn" id="save" style="flex:2">Done</button></div>
+  </div>`;
+  const $ = id => document.getElementById(id);
+
+  const snapshot = JSON.stringify(w);
+  let saveTimer = null, dirty = false;
+  function commit(){
+    if(!w.name.trim()) return false;
+    const clean = JSON.parse(JSON.stringify(w));
+    const i = data.workouts.findIndex(x => x.id === w.id);
+    if(i >= 0) data.workouts[i] = clean; else data.workouts.push(clean);
+    saveData(); dirty = false; return true;
+  }
+  function flash(txt, ok){
+    const m = $('savedmsg'); if(!m) return;
+    m.textContent = txt; m.className = 'saved on' + (ok ? ' ok' : '');
+    clearTimeout(m._t); m._t = setTimeout(()=>{ m.className = 'saved'; }, 1600);
+  }
+  function touch(){
+    dirty = true;
+    const m = $('savedmsg'); if(m){ m.textContent = 'Saving…'; m.className = 'saved on'; }
+    clearTimeout(saveTimer);
+    saveTimer = setTimeout(()=>{ commit() ? flash('Saved \u2713', true) : flash('Add a name to save'); }, 600);
+  }
+  function flush(){ clearTimeout(saveTimer); if(dirty) commit(); }
+  editFlush = flush;
+
+  $('w-name').value = w.name;
+  $('w-name').oninput = e=>{ w.name = e.target.value; touch(); };
+  $('w-between').value = w.betweenSec;
+  $('w-between').onblur = ()=>{ const n = Math.min(3600, Math.max(5, parseInt($('w-between').value,10)||5));
+    $('w-between').value = n; w.betweenSec = n; touch(); };
+
+  function drawItems(){
+    const box = $('w-items'); box.innerHTML = '';
+    w.items.forEach((id, i) => {
+      const ex = data.exercises.find(e => e.id === id);
+      const row = document.createElement('div'); row.className = 'setrow';
+      row.innerHTML = `<span style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;
+          white-space:nowrap;font-family:var(--display);font-size:18px;text-transform:uppercase;
+          letter-spacing:.5px">${i+1}. ${ex ? esc(ex.name) : 'Missing exercise'}</span>
+        <button class="vx up" style="color:var(--text)">↑</button>
+        <button class="vx dn" style="color:var(--text)">↓</button>
+        <button class="vx rm">×</button>`;
+      row.querySelector('.up').onclick = ()=>{ if(i>0){ [w.items[i-1],w.items[i]]=[w.items[i],w.items[i-1]]; drawItems(); touch(); } };
+      row.querySelector('.dn').onclick = ()=>{ if(i<w.items.length-1){ [w.items[i+1],w.items[i]]=[w.items[i],w.items[i+1]]; drawItems(); touch(); } };
+      row.querySelector('.rm').onclick = ()=>{ w.items.splice(i,1); drawItems(); touch(); };
+      box.appendChild(row);
+    });
+  }
+  drawItems();
+
+  $('w-add').onclick = ()=>{
+    const opts = data.exercises.map(e =>
+      `<button class="btn ghost" style="width:100%;margin-bottom:8px;text-align:left" data-pick="${e.id}">${esc(e.name)}</button>`).join('');
+    modal(`<h3>Add exercise</h3>
+      ${opts || '<p>No exercises yet — create one:</p>'}
+      <button class="btn" style="width:100%" data-new>+ Create new exercise</button>
+      <div class="row"><button class="btn ghost grow" data-x>Close</button></div>`,
+      el => {
+        el.querySelectorAll('[data-pick]').forEach(b => b.onclick = ()=>{
+          w.items.push(b.getAttribute('data-pick')); drawItems(); touch(); closeModal(); });
+        el.querySelector('[data-new]').onclick = ()=>{
+          closeModal(); flush(); editFlush = null;
+          const wid = w.id;
+          afterEdit = (newId)=>{
+            const cur = data.workouts.find(x => x.id === wid) ||
+                        Object.assign(w, {});
+            const copy = JSON.parse(JSON.stringify(cur));
+            if(newId) copy.items.push(newId);
+            go('wedit', copy);
+          };
+          go('edit', blank());
+        };
+      });
+  };
+
+  $('cancel').onclick = ()=>{
+    clearTimeout(saveTimer); dirty = false; editFlush = null;
+    const orig = JSON.parse(snapshot);
+    const i = data.workouts.findIndex(x => x.id === w.id);
+    if(isNew){ if(i >= 0) data.workouts.splice(i,1); }
+    else if(i >= 0) data.workouts[i] = orig;
+    saveData(); go('list');
+  };
+  $('save').onclick = ()=>{ if(!w.name.trim()){ $('w-name').focus(); flash('Add a name to save'); return; }
     flush(); editFlush = null; go('list'); };
 }
 
 /* ── TIMER (5s get-ready, then work/rest cycles; auto-starts) ── */
-function buildPlan(ex){
+function planForExercise(ex){
   const p=[], run=ex.mode==='run', total=totalSetsOf(ex);
-  if(total>0) p.push({kind:'prep', setIndex:0, dur:5});
   for(let i=0;i<total;i++){ const h=!run && i<ex.heavySets;
-    p.push({kind:'work', setIndex:i, isHeavy:h, isRun:run, dur:ex.workSec,
+    p.push({kind:'work', ex, setIndex:i, isHeavy:h, isRun:run, dur:ex.workSec,
             value:ex.setValues[i], reps: run ? '' : (ex.setReps||[])[i]});
-    if(i<total-1) p.push({kind:'rest', setIndex:i, isHeavy:h, isRun:run, dur:ex.restSec}); }
+    if(i<total-1) p.push({kind:'rest', ex, setIndex:i, isHeavy:h, isRun:run, dur:ex.restSec}); }
   return p;
 }
+function buildPlan(ex){
+  const p = planForExercise(ex);
+  if(p.length) p.unshift({kind:'prep', ex, setIndex:0, dur:5});
+  return p;
+}
+/* a workout chains exercise plans, with a "next up" rest between them */
+function buildWorkoutPlan(w){
+  const exs = w.items.map(id => data.exercises.find(e=>e.id===id)).filter(Boolean);
+  const plan = [];
+  exs.forEach((ex, k) => {
+    const sub = planForExercise(ex);
+    if(!sub.length) return;
+    if(plan.length === 0) plan.push({kind:'prep', ex, setIndex:0, dur:5, exIdx:k});
+    else plan.push({kind:'between', ex, dur:Math.max(5, w.betweenSec||60), exIdx:k});
+    sub.forEach(s => { s.exIdx = k; plan.push(s); });
+  });
+  return { plan, exs };
+}
 
-function renderTimer(id){
-  const ex = data.exercises.find(e=>e.id===id);
-  if(!ex){ go('list'); return; }
-  const plan = buildPlan(ex);
-  const totalSets = totalSetsOf(ex);
+/* renderTimer(arg): arg = {ex:id} for one exercise, {wo:id} for a workout */
+function renderTimer(arg){
+  let plan, exs, title, totalSetsAll;
+  if(arg.wo){
+    const w = data.workouts.find(x=>x.id===arg.wo);
+    if(!w){ go('list'); return; }
+    ({plan, exs} = buildWorkoutPlan(w));
+    title = w.name || 'Workout';
+    totalSetsAll = exs.reduce((s,e)=>s+totalSetsOf(e), 0);
+  } else {
+    const ex = data.exercises.find(e=>e.id===arg.ex);
+    if(!ex){ go('list'); return; }
+    plan = buildPlan(ex); exs = [ex]; title = ex.name;
+    totalSetsAll = totalSetsOf(ex);
+  }
+  const isWo = exs.length > 1 || !!arg.wo;
   timer = { iv:null, step:0, remaining:plan[0]?plan[0].dur:0, endAt:null,
             running:false, done:plan.length===0 };
 
   const SIZE_P=290, SIZE_L=220;
   app.innerHTML = `<div class="timer" id="tscr">
-    <div class="t-top"><button class="t-back" id="back">← Back</button>
-      <div class="t-name">${esc(ex.name)}</div></div>
-    ${(()=>{const vs=(ex.videos||[]).filter(u=>u&&u.trim());
-      return vs.length?`<div class="vidrow" style="justify-content:center">${vs.map((u,i)=>
-        `<a class="vidlink" href="${esc(u)}" target="_blank" rel="noopener">▶ Video ${i+1}</a>`).join('')}</div>`:'';})()}
+    <div class="t-top"><button class="t-back" id="back">\u2190 Back</button>
+      <div class="t-name" id="tname"></div></div>
+    <div class="vidrow" id="vrow" style="justify-content:center"></div>
     <div class="t-main" id="tmain">
       <div class="ringwrap" id="ringwrap">
         <svg id="ringsvg" width="290" height="290" style="transform:rotate(-90deg)">
@@ -618,14 +809,15 @@ function renderTimer(id){
       <div class="t-side" id="tside">
         <div class="t-phase" id="phase"></div>
         <div class="t-val" id="pval"></div>
+        <div class="t-val" id="equip" style="font-size:15px"></div>
         <div class="dots" id="dots"></div>
       </div>
     </div>
     <div class="t-controls" id="ctrls">
       <div class="row">
-        <button class="btn ghost" id="prev" style="width:64px">‹‹</button>
+        <button class="btn ghost" id="prev" style="width:64px">\u2039\u2039</button>
         <button class="btn grow" id="toggle" style="font-size:17px"></button>
-        <button class="btn ghost" id="next" style="width:64px">››</button>
+        <button class="btn ghost" id="next" style="width:64px">\u203a\u203a</button>
       </div>
       <button class="t-reset" id="resetSet">Reset this set</button>
     </div>
@@ -648,44 +840,64 @@ function renderTimer(id){
   function cur(){ return plan[Math.min(timer.step, plan.length-1)]; }
   function phaseColor(){ const c=cur();
     if(timer.done) return 'var(--rest)';
-    if(c.kind==='prep') return 'var(--prep)';
+    if(c.kind==='prep' || c.kind==='between') return 'var(--prep)';
     if(c.kind==='rest') return 'var(--rest)';
     return c.isHeavy ? 'var(--heavy)' : 'var(--light)'; }
+
+  let vrowFor = null;
+  function drawHeader(c){
+    $('tname').textContent = isWo
+      ? c.ex.name + ' \u00b7 ' + (c.exIdx+1) + '/' + exs.length
+      : title;
+    if(vrowFor !== c.ex.id){
+      vrowFor = c.ex.id;
+      const vs = (c.ex.videos||[]).filter(u=>u&&u.trim());
+      $('vrow').innerHTML = vs.map((u,i)=>
+        `<a class="vidlink" href="${esc(u)}" target="_blank" rel="noopener">\u25B6 Video ${i+1}</a>`).join('');
+    }
+  }
 
   function draw(){
     const c = cur();
     if(timer.done){
       $('tmain').innerHTML = `<div><div class="t-done">Done</div>
-        <div class="t-done-sub">${totalSets} sets complete. Nice work.</div></div>`;
+        <div class="t-done-sub">${isWo ? exs.length+' exercises \u00b7 ' : ''}${totalSetsAll} sets complete. Nice work.</div></div>`;
       $('ctrls').innerHTML = `<div class="row">
         <button class="btn ghost grow" id="again">Run again</button>
         <button class="btn grow" id="finish">Finish</button></div>`;
-      $('again').onclick = ()=> renderTimer(id);
+      $('again').onclick = ()=> renderTimer(arg);
       $('finish').onclick = ()=> go('list');
       $('tscr').style.background = `radial-gradient(circle at 50% 30%, rgba(78,208,168,.08), var(--bg) 65%)`;
+      $('tname').textContent = title;
       return;
     }
+    drawHeader(c);
     $('phase').textContent = c.kind==='prep' ? 'Get ready'
+      : c.kind==='between' ? 'Next: ' + c.ex.name
       : c.kind==='rest' ? 'Rest'
       : c.isRun ? 'Sprint '+(c.setIndex+1)
-      : (c.isHeavy ? 'Heavy set '+(c.setIndex+1) : 'Light set '+(c.setIndex-ex.heavySets+1));
+      : (c.isHeavy ? 'Heavy set '+(c.setIndex+1) : 'Light set '+(c.setIndex-c.ex.heavySets+1));
     $('phase').style.color = phaseColor();
     if(c.kind==='work'){
       const parts=[];
-      if(c.value) parts.push(c.value+' '+unitOf(ex));
+      if(c.value) parts.push(c.value+' '+unitOf(c.ex));
       if(c.reps) parts.push(c.reps+' reps');
-      $('pval').textContent = parts.join(' × ');
-    } else $('pval').textContent = '';
+      $('pval').textContent = parts.join(' \u00d7 ');
+      $('equip').textContent = c.ex.equipment ? '\u2699 ' + c.ex.equipment : '';
+    } else { $('pval').textContent = ''; $('equip').textContent =
+      (c.kind==='between' && c.ex.equipment) ? '\u2699 ' + c.ex.equipment : ''; }
     $('digits').textContent = fmt(timer.remaining);
     const ring=$('ring');
     ring.style.stroke = phaseColor();
     ring.setAttribute('stroke-dashoffset', CIRC*(1 - (c.dur>0 ? timer.remaining/c.dur : 0)));
     $('tscr').style.background = `radial-gradient(circle at 50% 30%, color-mix(in srgb, ${phaseColor()} 8%, transparent), var(--bg) 65%)`;
     const dots=$('dots'); dots.innerHTML='';
-    for(let i=0;i<totalSets;i++){
-      const passed = i<c.setIndex || (i===c.setIndex && c.kind==='rest');
-      const active = i===c.setIndex && c.kind==='work';
-      const col = (ex.mode!=='run' && i<ex.heavySets) ? 'var(--heavy)' : 'var(--light)';
+    const dEx = c.ex, n = totalSetsOf(dEx);
+    const si = (c.kind==='between' || c.kind==='prep') ? -1 : c.setIndex;
+    for(let i=0;i<n;i++){
+      const passed = si >= 0 && (i<si || (i===si && c.kind==='rest'));
+      const active = i===si && c.kind==='work';
+      const col = (dEx.mode!=='run' && i<dEx.heavySets) ? 'var(--heavy)' : 'var(--light)';
       const d=document.createElement('span');
       d.className='dot'+(active?' active':'');
       d.style.borderColor=col; d.style.background=(passed||active)?col:'transparent';
@@ -696,10 +908,7 @@ function renderTimer(id){
     $('toggle').style.background = phaseColor();
   }
 
-  /* The timer tracks a wall-clock deadline (endAt) instead of counting
-     ticks. If iOS pauses JS, the next tick catches up: phases that
-     elapsed are advanced (with their sounds) and the display lands on
-     the correct remaining time. Runs at 4Hz for responsiveness. */
+  /* wall-clock deadline engine: survives iOS suspension, catches up */
   function tick(){
     if(!timer.running) return;
     const now = Date.now();
@@ -753,6 +962,7 @@ function renderTimer(id){
   /* auto-start with the 5s get-ready lead */
   if(plan.length>0){ sndPrepTick(); start(); keepAwake(); }
 }
+
 
 /* ════════ BOOT ════════ */
 /* never lose an in-progress edit when iOS suspends or closes the app */
