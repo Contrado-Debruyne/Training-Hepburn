@@ -125,7 +125,7 @@ input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:24px;heigh
    When a future app version needs a new shape, add a step to migrate():
    data is upgraded in place, never discarded.                            */
 const KEY = 'trainer.data';            // ← never change this key
-const SCHEMA_VERSION = 3;
+const SCHEMA_VERSION = 4;
 
 function migrate(d){
   if (!d || typeof d !== 'object') return { schemaVersion: SCHEMA_VERSION, exercises: [] };
@@ -137,6 +137,14 @@ function migrate(d){
   if (d.schemaVersion === 2){
     d.settings = d.settings || { sound: true, volume: 0.8, halfway: true };
     d.schemaVersion = 3;
+  }
+  if (d.schemaVersion === 3){
+    (d.exercises||[]).forEach(e => {
+      if(e.sprints == null) e.sprints = e.mode==='run'
+        ? Math.max(1,(e.heavySets||0)+(e.lightSets||0)) : 4;
+      if(!e.distanceUnit) e.distanceUnit = 'km';
+    });
+    d.schemaVersion = 4;
   }
   if (!d.settings) d.settings = { sound: true, volume: 0.8, halfway: true };
   /* future upgrades go here following the same pattern */
@@ -151,8 +159,11 @@ function saveData(){ try { localStorage.setItem(KEY, JSON.stringify(data)); } ca
 let data = loadData();
 const uid = () => Math.random().toString(36).slice(2,10);
 const blank = () => ({ id: uid(), name:'', description:'', mode:'weights',
-  heavySets:3, lightSets:2, setValues:['','','','',''], setReps:['','','','',''],
+  heavySets:3, lightSets:2, sprints:4, distanceUnit:'km',
+  setValues:['','','','',''], setReps:['','','','',''],
   workSec:45, restSec:60, notes:'' });
+const totalSetsOf = ex => ex.mode==='run' ? (ex.sprints||0) : ex.heavySets+ex.lightSets;
+const unitOf = ex => ex.mode==='run' ? (ex.distanceUnit||'km') : 'kg';
 const resizeVals = (v,n) => { const o=v.slice(0,n); while(o.length<n) o.push(''); return o; };
 const fmt = s => Math.floor(s/60)+':'+String(s%60).padStart(2,'0');
 const esc = s => String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
@@ -263,12 +274,13 @@ function renderList(){
   <button class="fab" id="addBtn">+ Add exercise</button>`;
   const cards = document.getElementById('cards');
   exs.forEach(ex => {
-    const total = ex.heavySets + ex.lightSets;
-    const unit = ex.mode==='run' ? 'km' : 'kg';
+    const total = totalSetsOf(ex);
+    const unit = unitOf(ex);
+    const run = ex.mode==='run';
     const chips = Array.from({length: total}).map((_,i)=>{
       const v = ex.setValues[i], r = (ex.setReps||[])[i];
-      const txt = (v?esc(v)+' '+unit:'—') + (r?' × '+esc(r):'');
-      return `<span class="chip ${i<ex.heavySets?'h':'l'}">${txt}</span>`;
+      const txt = (v?esc(v)+' '+unit:'—') + (!run && r?' × '+esc(r):'');
+      return `<span class="chip ${!run && i<ex.heavySets?'h':'l'}">${txt}</span>`;
     }).join('');
     const card = document.createElement('div');
     card.className = 'card';
@@ -389,12 +401,18 @@ function renderEdit(ex){
     <div class="field"><div class="label">Description</div>
       <textarea id="f-desc" rows="2" placeholder="Form cues, tempo, machine settings…"></textarea></div>
     <div class="field"><div class="label">Type</div>
-      <div class="seg"><button id="m-w">Weights (kg)</button><button id="m-r">Run (km)</button></div></div>
-    <div class="split">
+      <div class="seg"><button id="m-w">Weights</button><button id="m-r">Run</button></div></div>
+    <div class="split" id="wsets">
       <div class="field"><div class="label">Heavy sets</div>
         <div class="stepper"><button id="h-">−</button><span class="val" id="h-val" style="color:var(--heavy)"></span><button id="h+">+</button></div></div>
       <div class="field"><div class="label">Light sets</div>
         <div class="stepper"><button id="l-">−</button><span class="val" id="l-val" style="color:var(--light)"></span><button id="l+">+</button></div></div>
+    </div>
+    <div class="split" id="rsets" style="display:none">
+      <div class="field"><div class="label">Sprints</div>
+        <div class="stepper"><button id="s-">−</button><span class="val" id="s-val" style="color:var(--light)"></span><button id="s+">+</button></div></div>
+      <div class="field"><div class="label">Distance unit</div>
+        <div class="seg"><button id="u-m">m</button><button id="u-km">km</button></div></div>
     </div>
     <div class="split">
       <div class="field"><div class="label">Work (seconds)</div>
@@ -453,12 +471,26 @@ function renderEdit(ex){
   $('f-desc').oninput = e=>{ ex.description = e.target.value; touch(); };
   $('f-notes').oninput = e=>{ ex.notes = e.target.value; touch(); };
 
-  function drawMode(){ $('m-w').className = ex.mode==='weights'?'on':''; $('m-r').className = ex.mode==='run'?'on':''; drawSets(); }
+  function drawMode(){
+    const run = ex.mode==='run';
+    $('m-w').className = run?'':'on'; $('m-r').className = run?'on':'';
+    $('wsets').style.display = run?'none':'flex';
+    $('rsets').style.display = run?'flex':'none';
+    $('u-m').className  = ex.distanceUnit==='m' ?'on':'';
+    $('u-km').className = ex.distanceUnit==='km'?'on':'';
+    drawCounts();
+  }
   $('m-w').onclick = ()=>{ ex.mode='weights'; drawMode(); touch(); };
   $('m-r').onclick = ()=>{ ex.mode='run'; drawMode(); touch(); };
+  $('u-m').onclick  = ()=>{ ex.distanceUnit='m';  drawMode(); touch(); };
+  $('u-km').onclick = ()=>{ ex.distanceUnit='km'; drawMode(); touch(); };
+  $('s+').onclick = ()=>{ ex.sprints++; drawCounts(); touch(); };
+  $('s-').onclick = ()=>{ if(ex.sprints>1){ ex.sprints--; drawCounts(); touch(); } };
 
-  function drawCounts(){ $('h-val').textContent = ex.heavySets; $('l-val').textContent = ex.lightSets;
-    const n = ex.heavySets+ex.lightSets;
+  function drawCounts(){
+    $('h-val').textContent = ex.heavySets; $('l-val').textContent = ex.lightSets;
+    $('s-val').textContent = ex.sprints;
+    const n = totalSetsOf(ex);
     ex.setValues = resizeVals(ex.setValues, n);
     ex.setReps = resizeVals(ex.setReps||[], n); drawSets(); }
   $('h+').onclick = ()=>{ ex.heavySets++; drawCounts(); touch(); };
@@ -467,20 +499,27 @@ function renderEdit(ex){
   $('l-').onclick = ()=>{ if(ex.lightSets>0){ ex.lightSets--; drawCounts(); touch(); } };
 
   function drawSets(){
-    const unit = ex.mode==='run'?'km':'kg';
-    $('sets-label').textContent = ex.mode==='run'?'Distance per set (km)':'Weight per set (kg)';
+    const run = ex.mode==='run';
+    const unit = unitOf(ex);
+    $('sets-label').textContent = run
+      ? 'Distance per sprint ('+unit+')' : 'Weight per set (kg)';
     const box = $('sets'); box.innerHTML='';
-    for(let i=0;i<ex.heavySets+ex.lightSets;i++){
-      const heavy = i<ex.heavySets;
+    for(let i=0;i<totalSetsOf(ex);i++){
+      const heavy = !run && i<ex.heavySets;
+      const label = run ? 'Sprint '+(i+1)
+        : (heavy ? 'Heavy '+(i+1) : 'Light '+(i-ex.heavySets+1));
       const row = document.createElement('div'); row.className='setrow';
-      row.innerHTML = `<span class="tag" style="color:var(--${heavy?'heavy':'light'})">${heavy?'Heavy '+(i+1):'Light '+(i-ex.heavySets+1)}</span>
-        <input type="number" inputmode="decimal" placeholder="${unit}"><span class="unit">${unit}</span>
-        <input type="number" inputmode="numeric" class="reps" placeholder="reps"><span class="unit">×</span>`;
-      const [inp, rinp] = row.querySelectorAll('input');
-      inp.value = ex.setValues[i];
-      inp.oninput = e => { ex.setValues[i] = e.target.value; touch(); };
-      rinp.value = (ex.setReps||[])[i] || '';
-      rinp.oninput = e => { ex.setReps[i] = e.target.value; touch(); };
+      row.innerHTML = `<span class="tag" style="color:var(--${heavy?'heavy':'light'})">${label}</span>
+        <input type="number" inputmode="decimal" placeholder="${unit}"><span class="unit">${unit}</span>`
+        + (run ? '' :
+        `<input type="number" inputmode="numeric" class="reps" placeholder="reps"><span class="unit">×</span>`);
+      const inputs = row.querySelectorAll('input');
+      inputs[0].value = ex.setValues[i];
+      inputs[0].oninput = e => { ex.setValues[i] = e.target.value; touch(); };
+      if(!run){
+        inputs[1].value = (ex.setReps||[])[i] || '';
+        inputs[1].oninput = e => { ex.setReps[i] = e.target.value; touch(); };
+      }
       box.appendChild(row);
     }
   }
@@ -500,11 +539,12 @@ function renderEdit(ex){
 
 /* ── TIMER (5s get-ready, then work/rest cycles; auto-starts) ── */
 function buildPlan(ex){
-  const p=[], total=ex.heavySets+ex.lightSets;
+  const p=[], run=ex.mode==='run', total=totalSetsOf(ex);
   if(total>0) p.push({kind:'prep', setIndex:0, dur:5});
-  for(let i=0;i<total;i++){ const h=i<ex.heavySets;
-    p.push({kind:'work', setIndex:i, isHeavy:h, dur:ex.workSec, value:ex.setValues[i], reps:(ex.setReps||[])[i]});
-    if(i<total-1) p.push({kind:'rest', setIndex:i, isHeavy:h, dur:ex.restSec}); }
+  for(let i=0;i<total;i++){ const h=!run && i<ex.heavySets;
+    p.push({kind:'work', setIndex:i, isHeavy:h, isRun:run, dur:ex.workSec,
+            value:ex.setValues[i], reps: run ? '' : (ex.setReps||[])[i]});
+    if(i<total-1) p.push({kind:'rest', setIndex:i, isHeavy:h, isRun:run, dur:ex.restSec}); }
   return p;
 }
 
@@ -512,7 +552,7 @@ function renderTimer(id){
   const ex = data.exercises.find(e=>e.id===id);
   if(!ex){ go('list'); return; }
   const plan = buildPlan(ex);
-  const totalSets = ex.heavySets + ex.lightSets;
+  const totalSets = totalSetsOf(ex);
   timer = { iv:null, step:0, remaining:plan[0]?plan[0].dur:0, endAt:null,
             running:false, done:plan.length===0 };
 
@@ -581,11 +621,12 @@ function renderTimer(id){
     }
     $('phase').textContent = c.kind==='prep' ? 'Get ready'
       : c.kind==='rest' ? 'Rest'
+      : c.isRun ? 'Sprint '+(c.setIndex+1)
       : (c.isHeavy ? 'Heavy set '+(c.setIndex+1) : 'Light set '+(c.setIndex-ex.heavySets+1));
     $('phase').style.color = phaseColor();
     if(c.kind==='work'){
       const parts=[];
-      if(c.value) parts.push(c.value+' '+(ex.mode==='run'?'km':'kg'));
+      if(c.value) parts.push(c.value+' '+unitOf(ex));
       if(c.reps) parts.push(c.reps+' reps');
       $('pval').textContent = parts.join(' × ');
     } else $('pval').textContent = '';
@@ -598,7 +639,7 @@ function renderTimer(id){
     for(let i=0;i<totalSets;i++){
       const passed = i<c.setIndex || (i===c.setIndex && c.kind==='rest');
       const active = i===c.setIndex && c.kind==='work';
-      const col = i<ex.heavySets ? 'var(--heavy)' : 'var(--light)';
+      const col = (ex.mode!=='run' && i<ex.heavySets) ? 'var(--heavy)' : 'var(--light)';
       const d=document.createElement('span');
       d.className='dot'+(active?' active':'');
       d.style.borderColor=col; d.style.background=(passed||active)?col:'transparent';

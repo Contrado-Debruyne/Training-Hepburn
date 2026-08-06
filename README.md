@@ -95,3 +95,10 @@ mutes all web audio.
 - Limits: iOS can still terminate any background page under memory
   pressure. If that happens, the timer resyncs to the correct time the
   moment you reopen it — elapsed sets are accounted for.
+
+## Run mode
+Run exercises no longer use heavy/light sets. Instead you set the number of
+SPRINTS with its own stepper, choose the distance unit (m or km), and enter
+a distance per sprint. Reps fields are hidden for runs. Existing run
+exercises are migrated automatically: their old heavy+light count becomes
+the sprint count.
