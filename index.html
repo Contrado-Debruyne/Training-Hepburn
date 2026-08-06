@@ -185,6 +185,7 @@ function ensureAudio(){ try{ if(!audioCtx) audioCtx = new (window.AudioContext||
 function tone(f=880, d=.15, w=0, opt={}){
   try{
     if(!data.settings.sound && !opt.force) return;
+    /* opt.force previews still respect the volume slider */
     ensureAudio(); if(!audioCtx) return;
     const t=audioCtx.currentTime+w, o=audioCtx.createOscillator(), g=audioCtx.createGain();
     o.type = opt.type || 'sine';
@@ -207,18 +208,19 @@ const beep = (f,d,w)=> tone(f,d,w);
    halfway    : single soft tick mid-set
    countdown  : three short ticks before every change
    finish     : rising three-note fanfare                     */
-const sndHeavyStart = ()=>{ tone(196,.22,0,{vol:.55,type:'triangle'});
-                            tone(294,.34,.18,{vol:.5,type:'triangle',glide:392}); };
-const sndLightStart = ()=>{ tone(784,.12,0,{vol:.4});
-                            tone(1175,.22,.13,{vol:.4,glide:1319}); };
-const sndSetEnd     = ()=>{ tone(523,.28,0,{vol:.45});
-                            tone(392,.42,.26,{vol:.45,glide:294}); };
-const sndRestStart  = ()=>{ sndSetEnd(); tone(262,.5,.55,{vol:.22,type:'triangle'}); };
-const sndHalfway    = ()=>{ tone(880,.09,0,{vol:.22}); };
+/* each cue accepts force=true: test buttons bypass the in-app mute */
+const sndHeavyStart = (force)=>{ tone(196,.22,0,{vol:.55,type:'triangle',force});
+                            tone(294,.34,.18,{vol:.5,type:'triangle',glide:392,force}); };
+const sndLightStart = (force)=>{ tone(784,.12,0,{vol:.4,force});
+                            tone(1175,.22,.13,{vol:.4,glide:1319,force}); };
+const sndSetEnd     = (force)=>{ tone(523,.28,0,{vol:.45,force});
+                            tone(392,.42,.26,{vol:.45,glide:294,force}); };
+const sndRestStart  = (force)=>{ sndSetEnd(force); tone(262,.5,.55,{vol:.22,type:'triangle',force}); };
+const sndHalfway    = (force)=>{ tone(880,.09,0,{vol:.22,force}); };
 const sndCountTick  = ()=>{ tone(660,.09,0,{vol:.3}); };
 const sndPrepTick   = ()=>{ tone(660,.12,0,{vol:.3}); };
-const sndAllDone    = ()=>{ tone(523,.16,0,{vol:.5}); tone(659,.16,.18,{vol:.5});
-                            tone(784,.45,.36,{vol:.55,type:'triangle'}); };
+const sndAllDone    = (force)=>{ tone(523,.16,0,{vol:.5,force}); tone(659,.16,.18,{vol:.5,force});
+                            tone(784,.45,.36,{vol:.55,type:'triangle',force}); };
 /* legacy names kept so older calls still work */
 const soundSetStart = sndLightStart, soundSetEnd = sndSetEnd, soundAllDone = sndAllDone;
 /* ── background keep-alive ─────────────────────────────────────
@@ -278,7 +280,7 @@ function renderList(){
       : exs.length+' exercise'+(exs.length>1?'s':'')+' · tap one to start its timer'}</div>
     <div id="cards"></div>
     <button class="backup-link" id="soundBtn">Sound settings</button>
-    <div style="text-align:center;color:var(--line);font-size:11px;margin-top:18px">app version 9</div>
+    <div style="text-align:center;color:var(--line);font-size:11px;margin-top:18px">app version 10</div>
     <button class="backup-link" id="backupBtn">Backup &amp; restore workouts</button>
   </div>
   <button class="fab" id="addBtn">+ Add exercise</button>`;
@@ -352,6 +354,14 @@ function soundModal(){
     <div class="row"><button class="btn grow" data-x>Close</button></div>`,
   el => {
     const $$ = i => el.querySelector('#'+i);
+    /* previews must run inside an active media session, otherwise the
+       ring/silent switch mutes them (same trick the workout timer uses) */
+    let prevT = null;
+    function preview(fn){
+      ensureAudio(); sessionOn(); fn(true);
+      clearTimeout(prevT);
+      prevT = setTimeout(()=>{ if(!(timer && timer.running)) sessionOff(); }, 3000);
+    }
     function paint(){
       $$('s-on').className  = s.sound ? 'on' : '';
       $$('s-off').className = s.sound ? '' : 'on';
@@ -360,16 +370,16 @@ function soundModal(){
       $$('s-vol').value = s.volume;
     }
     paint();
-    $$('s-on').onclick  = ()=>{ s.sound = true;  saveData(); paint(); ensureAudio(); sndLightStart(); };
+    $$('s-on').onclick  = ()=>{ s.sound = true;  saveData(); paint(); preview(sndLightStart); };
     $$('s-off').onclick = ()=>{ s.sound = false; saveData(); paint(); };
-    $$('s-half').onclick  = ()=>{ s.halfway = true;  saveData(); paint(); sndHalfway(); };
+    $$('s-half').onclick  = ()=>{ s.halfway = true;  saveData(); paint(); preview(sndHalfway); };
     $$('s-nohalf').onclick= ()=>{ s.halfway = false; saveData(); paint(); };
     $$('s-vol').oninput = e => { s.volume = parseFloat(e.target.value); saveData(); };
-    $$('s-vol').onchange = ()=>{ ensureAudio(); sndLightStart(); };
-    $$('t-heavy').onclick = ()=>{ ensureAudio(); sndHeavyStart(); };
-    $$('t-light').onclick = ()=>{ ensureAudio(); sndLightStart(); };
-    $$('t-rest').onclick  = ()=>{ ensureAudio(); sndRestStart(); };
-    $$('t-done').onclick  = ()=>{ ensureAudio(); sndAllDone(); };
+    $$('s-vol').onchange = ()=>{ preview(sndLightStart); };
+    $$('t-heavy').onclick = ()=> preview(sndHeavyStart);
+    $$('t-light').onclick = ()=> preview(sndLightStart);
+    $$('t-rest').onclick  = ()=> preview(sndRestStart);
+    $$('t-done').onclick  = ()=> preview(sndAllDone);
   });
 }
 
