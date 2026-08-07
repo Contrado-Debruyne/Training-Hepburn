@@ -130,7 +130,7 @@ input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:24px;heigh
    When a future app version needs a new shape, add a step to migrate():
    data is upgraded in place, never discarded.                            */
 const KEY = 'trainer.data';            // ← never change this key
-const SCHEMA_VERSION = 6;
+const SCHEMA_VERSION = 7;
 
 function migrate(d){
   if (!d || typeof d !== 'object') return { schemaVersion: SCHEMA_VERSION, exercises: [] };
@@ -160,7 +160,16 @@ function migrate(d){
     d.workouts = d.workouts || [];
     d.schemaVersion = 6;
   }
+  if (d.schemaVersion === 6){
+    (d.workouts||[]).forEach(w => {
+      if(!Array.isArray(w.blocks))
+        w.blocks = (w.items||[]).map(id => ({ id: uid(), type:'exercise', exerciseId:id }));
+      delete w.items;
+    });
+    d.schemaVersion = 7;
+  }
   if (!Array.isArray(d.workouts)) d.workouts = [];
+  (d.workouts||[]).forEach(w => { if(!Array.isArray(w.blocks)) w.blocks = []; });
   if (!d.settings) d.settings = { sound: true, volume: 0.8, halfway: true };
   /* future upgrades go here following the same pattern */
   return d;
@@ -177,7 +186,22 @@ const blank = () => ({ id: uid(), name:'', description:'', mode:'weights',
   heavySets:3, lightSets:2, sprints:4, distanceUnit:'km',
   setValues:['','','','',''], setReps:['','','','',''],
   videos:[], equipment:'', workSec:45, restSec:60, notes:'' });
-const blankWorkout = () => ({ id: uid(), name:'', betweenSec:90, items:[] });
+const blankWorkout = () => ({ id: uid(), name:'', betweenSec:90, blocks:[] });
+const blankTimedBlock = () => ({ id: uid(), type:'timed', name:'',
+  steps:[{name:'', sec:30}], restSec:0, videos:[], equipment:'' });
+const blockLabel = b => {
+  if(b.type==='exercise'){ const e = data.exercises.find(x=>x.id===b.exerciseId);
+    return e ? e.name : 'Missing exercise'; }
+  return b.name || 'Timed session';
+};
+/* commit a workout to storage (shared by workout + block editors) */
+function commitWorkout(w){
+  if(!w.name.trim()) return false;
+  const clean = JSON.parse(JSON.stringify(w));
+  const i = data.workouts.findIndex(x => x.id === w.id);
+  if(i >= 0) data.workouts[i] = clean; else data.workouts.push(clean);
+  saveData(); return true;
+}
 const totalSetsOf = ex => ex.mode==='run' ? (ex.sprints||0) : ex.heavySets+ex.lightSets;
 const unitOf = ex => ex.mode==='run' ? (ex.distanceUnit||'km') : 'kg';
 const resizeVals = (v,n) => { const o=v.slice(0,n); while(o.length<n) o.push(''); return o; };
@@ -273,6 +297,7 @@ function go(view, arg){
   if(editFlush){ editFlush(); editFlush = null; }
   if(timer){ clearInterval(timer.iv); timer=null; sessionOff(); }
   if(view==='wedit'){ renderWorkoutEdit(arg); window.scrollTo(0,0); return; }
+  if(view==='tedit'){ renderTimedEdit(arg.w, arg.idx); window.scrollTo(0,0); return; }
   if(view==='list') renderList();
   else if(view==='edit') renderEdit(arg);
   else if(view==='timer') renderTimer(arg);
@@ -294,22 +319,23 @@ function renderList(){
     <div class="label" style="margin-bottom:10px">Exercises</div>
     <div id="cards"></div>
     <button class="backup-link" id="soundBtn">Sound settings</button>
-    <div style="text-align:center;color:var(--line);font-size:11px;margin-top:18px">app version 11</div>
+    <div style="text-align:center;color:var(--line);font-size:11px;margin-top:18px">app version 12</div>
     <button class="backup-link" id="backupBtn">Backup &amp; restore workouts</button>
   </div>
   <button class="fab" id="addBtn">+ Add exercise</button>`;
   /* workout cards */
   const wcards = document.getElementById('wcards');
   data.workouts.forEach(w => {
-    const wexs = w.items.map(id => data.exercises.find(e=>e.id===id)).filter(Boolean);
+    const labels = (w.blocks||[]).map(blockLabel);
+    const wexs = labels; /* count of blocks */
     const card = document.createElement('div');
     card.className = 'card';
     card.innerHTML = `
       <div class="tap" style="cursor:pointer">
         <div class="card-head"><div class="card-name">${esc(w.name)||'Untitled workout'}</div>
-          <div class="card-time">${wexs.length} exercise${wexs.length===1?'':'s'}</div></div>
-        ${wexs.length?`<div class="card-desc">${wexs.map(e=>esc(e.name)).join(' → ')}</div>`
-          :'<div class="card-desc">Empty — tap Edit to add exercises</div>'}
+          <div class="card-time">${labels.length} block${labels.length===1?'':'s'}</div></div>
+        ${labels.length?`<div class="card-desc">${labels.map(esc).join(' → ')}</div>`
+          :'<div class="card-desc">Empty — tap Edit to add blocks</div>'}
       </div>
       <div class="row">
         ${wexs.length?'<button class="btn grow start">Start workout</button>':''}
@@ -373,7 +399,8 @@ function confirmDelete(id){
       <button class="btn grow" style="background:var(--danger);color:#fff" data-del>Delete</button></div>`,
     el => { el.querySelector('[data-del]').onclick = ()=>{
       data.exercises = data.exercises.filter(e=>e.id!==id);
-      data.workouts.forEach(w => { w.items = w.items.filter(x=>x!==id); });
+      data.workouts.forEach(w => {
+        w.blocks = (w.blocks||[]).filter(b => !(b.type==='exercise' && b.exerciseId===id)); });
       saveData(); closeModal(); renderList(); }; });
 }
 
@@ -641,18 +668,22 @@ function renderEdit(ex){
     if(cb) cb(ex.id); else go('list'); };
 }
 
-/* ── WORKOUT BUILDER ── */
+/* ── WORKOUT BUILDER — a workout is an ordered list of BLOCKS ──
+   Block types:
+   • exercise — a strength/run exercise from your library
+   • timed    — a named session of timed steps (stretching, yoga
+                with a video, mobility, breathing…)               */
 function renderWorkoutEdit(w){
   const isNew = !data.workouts.some(x => x.id === w.id);
   app.innerHTML = `<div class="screen">
     <h1 style="font-size:34px;margin-bottom:20px">${isNew?'New workout':'Edit workout'}</h1>
     <div class="field"><div class="label">Workout name</div>
-      <input id="w-name" placeholder="e.g. Upper body Monday"></div>
-    <div class="field"><div class="label">Rest between exercises (seconds)</div>
+      <input id="w-name" placeholder="e.g. Full session Monday"></div>
+    <div class="field"><div class="label">Rest between blocks (seconds)</div>
       <input id="w-between" type="number" inputmode="numeric" min="5" max="3600"></div>
-    <div class="field"><div class="label">Exercises — performed in this order</div>
+    <div class="field"><div class="label">Blocks \u2014 performed in this order</div>
       <div id="w-items"></div>
-      <button class="btn ghost" id="w-add" style="width:100%">+ Add exercise</button></div>
+      <button class="btn ghost" id="w-add" style="width:100%">+ Add block</button></div>
     <div class="saved" id="savedmsg"></div>
     <div class="row">
       <button class="btn ghost grow" id="cancel">Discard changes</button>
@@ -662,13 +693,6 @@ function renderWorkoutEdit(w){
 
   const snapshot = JSON.stringify(w);
   let saveTimer = null, dirty = false;
-  function commit(){
-    if(!w.name.trim()) return false;
-    const clean = JSON.parse(JSON.stringify(w));
-    const i = data.workouts.findIndex(x => x.id === w.id);
-    if(i >= 0) data.workouts[i] = clean; else data.workouts.push(clean);
-    saveData(); dirty = false; return true;
-  }
   function flash(txt, ok){
     const m = $('savedmsg'); if(!m) return;
     m.textContent = txt; m.className = 'saved on' + (ok ? ' ok' : '');
@@ -676,11 +700,12 @@ function renderWorkoutEdit(w){
   }
   function touch(){
     dirty = true;
-    const m = $('savedmsg'); if(m){ m.textContent = 'Saving…'; m.className = 'saved on'; }
+    const m = $('savedmsg'); if(m){ m.textContent = 'Saving\u2026'; m.className = 'saved on'; }
     clearTimeout(saveTimer);
-    saveTimer = setTimeout(()=>{ commit() ? flash('Saved \u2713', true) : flash('Add a name to save'); }, 600);
+    saveTimer = setTimeout(()=>{ (commitWorkout(w) ? (dirty=false, flash('Saved \u2713', true))
+      : flash('Add a name to save')); }, 600);
   }
-  function flush(){ clearTimeout(saveTimer); if(dirty) commit(); }
+  function flush(){ clearTimeout(saveTimer); if(dirty && commitWorkout(w)) dirty = false; }
   editFlush = flush;
 
   $('w-name').value = w.name;
@@ -689,49 +714,93 @@ function renderWorkoutEdit(w){
   $('w-between').onblur = ()=>{ const n = Math.min(3600, Math.max(5, parseInt($('w-between').value,10)||5));
     $('w-between').value = n; w.betweenSec = n; touch(); };
 
-  function drawItems(){
+  function drawBlocks(){
     const box = $('w-items'); box.innerHTML = '';
-    w.items.forEach((id, i) => {
-      const ex = data.exercises.find(e => e.id === id);
+    (w.blocks||[]).forEach((blk, i) => {
+      const isEx = blk.type==='exercise';
+      const sub = isEx ? '' :
+        (blk.steps||[]).filter(s=>s.name||s.sec).length + ' steps' +
+        ((blk.videos||[]).filter(u=>u&&u.trim()).length ? ' \u00b7 \u25B6 video' : '');
       const row = document.createElement('div'); row.className = 'setrow';
-      row.innerHTML = `<span style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;
-          white-space:nowrap;font-family:var(--display);font-size:18px;text-transform:uppercase;
-          letter-spacing:.5px">${i+1}. ${ex ? esc(ex.name) : 'Missing exercise'}</span>
-        <button class="vx up" style="color:var(--text)">↑</button>
-        <button class="vx dn" style="color:var(--text)">↓</button>
-        <button class="vx rm">×</button>`;
-      row.querySelector('.up').onclick = ()=>{ if(i>0){ [w.items[i-1],w.items[i]]=[w.items[i],w.items[i-1]]; drawItems(); touch(); } };
-      row.querySelector('.dn').onclick = ()=>{ if(i<w.items.length-1){ [w.items[i+1],w.items[i]]=[w.items[i],w.items[i+1]]; drawItems(); touch(); } };
-      row.querySelector('.rm').onclick = ()=>{ w.items.splice(i,1); drawItems(); touch(); };
+      row.innerHTML = `<span class="wblk" style="flex:1;min-width:0;cursor:pointer">
+          <span style="display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
+            font-family:var(--display);font-size:18px;text-transform:uppercase;letter-spacing:.5px">
+            ${i+1}. ${esc(blockLabel(blk))}</span>
+          <span style="display:block;font-size:12px;color:var(--dim)">
+            ${isEx?'exercise \u00b7 tap to edit':'timed session'+(sub?' \u00b7 '+sub:'')+' \u00b7 tap to edit'}</span></span>
+        <button class="vx up" style="color:var(--text)">\u2191</button>
+        <button class="vx dn" style="color:var(--text)">\u2193</button>
+        <button class="vx rm">\u00d7</button>`;
+      row.querySelector('.wblk').onclick = ()=>{
+        flush(); editFlush = null;
+        if(isEx){
+          const ex = data.exercises.find(e=>e.id===blk.exerciseId);
+          if(!ex) return;
+          const wid = w.id;
+          afterEdit = ()=>{ const cur = data.workouts.find(x=>x.id===wid);
+            go('wedit', cur ? JSON.parse(JSON.stringify(cur)) : w); };
+          go('edit', JSON.parse(JSON.stringify(ex)));
+        } else {
+          go('tedit', { w, idx:i });
+        }
+      };
+      row.querySelector('.up').onclick = ()=>{ if(i>0){ [w.blocks[i-1],w.blocks[i]]=[w.blocks[i],w.blocks[i-1]]; drawBlocks(); touch(); } };
+      row.querySelector('.dn').onclick = ()=>{ if(i<w.blocks.length-1){ [w.blocks[i],w.blocks[i+1]]=[w.blocks[i+1],w.blocks[i]]; drawBlocks(); touch(); } };
+      row.querySelector('.rm').onclick = ()=>{ w.blocks.splice(i,1); drawBlocks(); touch(); };
       box.appendChild(row);
     });
   }
-  drawItems();
+  drawBlocks();
 
   $('w-add').onclick = ()=>{
+    modal(`<h3>Add a block</h3>
+      <p>What kind of block comes next in this workout?</p>
+      <button class="btn ghost" style="width:100%;margin-bottom:8px;text-align:left" data-t="ex">
+        \u{1F3CB} Exercise \u2014 sets, reps, weights or sprints (from your library)</button>
+      <button class="btn ghost" style="width:100%;margin-bottom:8px;text-align:left" data-t="timed">
+        \u23F1 Timed session \u2014 stretching, mobility, breathing\u2026</button>
+      <button class="btn ghost" style="width:100%;margin-bottom:8px;text-align:left" data-t="video">
+        \u25B6 Video session \u2014 follow a YouTube video (yoga\u2026)</button>
+      <div class="row"><button class="btn ghost grow" data-x>Close</button></div>`,
+      el => {
+        el.querySelector('[data-t="ex"]').onclick = ()=>{ closeModal(); pickExercise(); };
+        el.querySelector('[data-t="timed"]').onclick = ()=>{
+          closeModal(); const blk = blankTimedBlock();
+          w.blocks.push(blk); flush(); editFlush = null;
+          go('tedit', { w, idx: w.blocks.length-1 }); };
+        el.querySelector('[data-t="video"]').onclick = ()=>{
+          closeModal(); const blk = blankTimedBlock();
+          blk.steps = [{name:'Follow the video', sec:600}];
+          blk.videos = [''];
+          w.blocks.push(blk); flush(); editFlush = null;
+          go('tedit', { w, idx: w.blocks.length-1 }); };
+      });
+  };
+
+  function pickExercise(){
     const opts = data.exercises.map(e =>
       `<button class="btn ghost" style="width:100%;margin-bottom:8px;text-align:left" data-pick="${e.id}">${esc(e.name)}</button>`).join('');
     modal(`<h3>Add exercise</h3>
-      ${opts || '<p>No exercises yet — create one:</p>'}
+      ${opts || '<p>No exercises yet \u2014 create one:</p>'}
       <button class="btn" style="width:100%" data-new>+ Create new exercise</button>
       <div class="row"><button class="btn ghost grow" data-x>Close</button></div>`,
       el => {
-        el.querySelectorAll('[data-pick]').forEach(b => b.onclick = ()=>{
-          w.items.push(b.getAttribute('data-pick')); drawItems(); touch(); closeModal(); });
+        el.querySelectorAll('[data-pick]').forEach(bn => bn.onclick = ()=>{
+          w.blocks.push({ id: uid(), type:'exercise', exerciseId: bn.getAttribute('data-pick') });
+          drawBlocks(); touch(); closeModal(); });
         el.querySelector('[data-new]').onclick = ()=>{
           closeModal(); flush(); editFlush = null;
           const wid = w.id;
           afterEdit = (newId)=>{
-            const cur = data.workouts.find(x => x.id === wid) ||
-                        Object.assign(w, {});
+            const cur = data.workouts.find(x => x.id === wid) || w;
             const copy = JSON.parse(JSON.stringify(cur));
-            if(newId) copy.items.push(newId);
+            if(newId) copy.blocks.push({ id: uid(), type:'exercise', exerciseId:newId });
             go('wedit', copy);
           };
           go('edit', blank());
         };
       });
-  };
+  }
 
   $('cancel').onclick = ()=>{
     clearTimeout(saveTimer); dirty = false; editFlush = null;
@@ -743,6 +812,96 @@ function renderWorkoutEdit(w){
   };
   $('save').onclick = ()=>{ if(!w.name.trim()){ $('w-name').focus(); flash('Add a name to save'); return; }
     flush(); editFlush = null; go('list'); };
+}
+
+/* ── TIMED SESSION EDITOR (stretching / yoga / mobility / breathing) ── */
+function renderTimedEdit(w, idx){
+  const b = w.blocks[idx];
+  app.innerHTML = `<div class="screen">
+    <h1 style="font-size:30px;margin-bottom:6px">Timed session</h1>
+    <div class="sub">Part of \u201c${esc(w.name||'this workout')}\u201d</div>
+    <div class="field"><div class="label">Session name</div>
+      <input id="b-name" placeholder="e.g. Stretching, Yoga flow, Breathing"></div>
+    <div class="field"><div class="label">Steps \u2014 each with its own timer</div>
+      <div id="b-steps"></div>
+      <button class="btn ghost" id="b-addstep" style="width:100%">+ Add step</button></div>
+    <div class="field"><div class="label">Rest between steps (seconds, 0 = none)</div>
+      <input id="b-rest" type="number" inputmode="numeric" min="0" max="3600"></div>
+    <div class="field"><div class="label">Equipment (optional)</div>
+      <input id="b-equip" placeholder="e.g. yoga mat, foam roller"></div>
+    <div class="field"><div class="label">YouTube videos (optional)</div>
+      <div id="b-vids"></div>
+      <button class="btn ghost" id="b-addvid" style="width:100%">+ Add video link</button></div>
+    <div class="saved" id="savedmsg"></div>
+    <div class="row">
+      <button class="btn" id="bdone" style="width:100%">Done \u2014 back to workout</button></div>
+  </div>`;
+  const $ = id => document.getElementById(id);
+
+  let saveTimer=null;
+  function flash(txt, ok){
+    const m = $('savedmsg'); if(!m) return;
+    m.textContent = txt; m.className = 'saved on' + (ok ? ' ok' : '');
+    clearTimeout(m._t); m._t = setTimeout(()=>{ m.className = 'saved'; }, 1600);
+  }
+  function touch(){
+    const m = $('savedmsg'); if(m){ m.textContent = 'Saving\u2026'; m.className='saved on'; }
+    clearTimeout(saveTimer);
+    saveTimer = setTimeout(()=>{ commitWorkout(w) ? flash('Saved \u2713', true)
+      : flash('Name the workout on the previous screen to save'); }, 600);
+  }
+  editFlush = ()=>{ clearTimeout(saveTimer); commitWorkout(w); };
+
+  $('b-name').value = b.name;
+  $('b-name').oninput = e=>{ b.name = e.target.value; touch(); };
+  $('b-rest').value = b.restSec||0;
+  $('b-rest').onblur = ()=>{ const n = Math.min(3600, Math.max(0, parseInt($('b-rest').value,10)||0));
+    $('b-rest').value = n; b.restSec = n; touch(); };
+  $('b-equip').value = b.equipment||'';
+  $('b-equip').oninput = e=>{ b.equipment = e.target.value; touch(); };
+
+  function drawSteps(){
+    const box = $('b-steps'); box.innerHTML = '';
+    (b.steps = b.steps||[]).forEach((s, i) => {
+      const row = document.createElement('div'); row.className='setrow';
+      row.innerHTML = `<input placeholder="e.g. Hamstring stretch">
+        <input type="number" inputmode="numeric" class="reps" placeholder="sec">
+        <span class="unit">s</span><button class="vx">\u00d7</button>`;
+      const [ni, si] = row.querySelectorAll('input');
+      ni.value = s.name||''; si.value = s.sec||'';
+      ni.oninput = e=>{ s.name = e.target.value; touch(); };
+      si.onblur = ()=>{ const n = Math.min(3600, Math.max(5, parseInt(si.value,10)||5));
+        si.value = n; s.sec = n; touch(); };
+      row.querySelector('.vx').onclick = ()=>{ b.steps.splice(i,1); drawSteps(); touch(); };
+      box.appendChild(row);
+    });
+  }
+  drawSteps();
+  $('b-addstep').onclick = ()=>{ b.steps.push({name:'', sec:30}); drawSteps(); touch();
+    const last = $('b-steps').querySelector('.setrow:last-child input'); if(last) last.focus(); };
+
+  function drawVids(){
+    const box = $('b-vids'); box.innerHTML = '';
+    (b.videos = b.videos||[]).forEach((u, i) => {
+      const row = document.createElement('div'); row.className='setrow';
+      row.innerHTML = `<input type="url" inputmode="url" autocapitalize="off"
+        placeholder="https://youtube.com/watch?v=\u2026"><button class="vx">\u00d7</button>`;
+      const inp = row.querySelector('input'); inp.value = u;
+      inp.oninput = e=>{ b.videos[i] = e.target.value; touch(); };
+      row.querySelector('.vx').onclick = ()=>{ b.videos.splice(i,1); drawVids(); touch(); };
+      box.appendChild(row);
+    });
+  }
+  drawVids();
+  $('b-addvid').onclick = ()=>{ b.videos.push(''); drawVids(); touch(); };
+
+  $('bdone').onclick = ()=>{
+    b.videos = (b.videos||[]).filter(u=>u&&u.trim());
+    b.steps = (b.steps||[]).filter(s => (s.name&&s.name.trim()) || s.sec);
+    if(!b.steps.length) b.steps = [{name:'', sec:30}];
+    clearTimeout(saveTimer); commitWorkout(w); editFlush = null;
+    go('wedit', w);
+  };
 }
 
 /* ── TIMER (5s get-ready, then work/rest cycles; auto-starts) ── */
@@ -759,36 +918,59 @@ function buildPlan(ex){
   if(p.length) p.unshift({kind:'prep', ex, setIndex:0, dur:5});
   return p;
 }
-/* a workout chains exercise plans, with a "next up" rest between them */
-function buildWorkoutPlan(w){
-  const exs = w.items.map(id => data.exercises.find(e=>e.id===id)).filter(Boolean);
-  const plan = [];
-  exs.forEach((ex, k) => {
-    const sub = planForExercise(ex);
-    if(!sub.length) return;
-    if(plan.length === 0) plan.push({kind:'prep', ex, setIndex:0, dur:5, exIdx:k});
-    else plan.push({kind:'between', ex, dur:Math.max(5, w.betweenSec||60), exIdx:k});
-    sub.forEach(s => { s.exIdx = k; plan.push(s); });
+function planForTimed(b){
+  const p = [];
+  const steps = (b.steps||[]).filter(s => (s.name&&s.name.trim()) || s.sec);
+  steps.forEach((s, i) => {
+    p.push({kind:'work', tStep:true, stepName:(s.name&&s.name.trim())||('Step '+(i+1)),
+            setIndex:i, dur:Math.max(5, parseInt(s.sec,10)||5)});
+    if(i < steps.length-1 && (b.restSec||0) > 0)
+      p.push({kind:'rest', setIndex:i, dur:b.restSec});
   });
-  return { plan, exs };
+  return p;
+}
+/* a workout chains BLOCK plans with a "next up" transition between them */
+function buildWorkoutPlan(w){
+  const blocks = (w.blocks||[]).map(b => {
+    if(b.type==='exercise'){
+      const ex = data.exercises.find(e=>e.id===b.exerciseId);
+      if(!ex) return null;
+      return { name: ex.name, ex, videos: ex.videos, equipment: ex.equipment,
+               sub: planForExercise(ex), dots: totalSetsOf(ex) };
+    }
+    const sub = planForTimed(b);
+    return { name: b.name||'Timed session', videos: b.videos, equipment: b.equipment,
+             sub, dots: sub.filter(x=>x.kind==='work').length };
+  }).filter(x => x && x.sub.length);
+  const plan = [];
+  blocks.forEach((blk, k) => {
+    if(plan.length === 0) plan.push({kind:'prep', dur:5, blk, exIdx:k});
+    else plan.push({kind:'between', dur:Math.max(5, w.betweenSec||60), blk, exIdx:k});
+    blk.sub.forEach(s => { s.blk = blk; s.exIdx = k; plan.push(s); });
+  });
+  return { plan, blocks };
 }
 
 /* renderTimer(arg): arg = {ex:id} for one exercise, {wo:id} for a workout */
 function renderTimer(arg){
-  let plan, exs, title, totalSetsAll;
+  let plan, blocks, title;
   if(arg.wo){
     const w = data.workouts.find(x=>x.id===arg.wo);
     if(!w){ go('list'); return; }
-    ({plan, exs} = buildWorkoutPlan(w));
+    ({plan, blocks} = buildWorkoutPlan(w));
     title = w.name || 'Workout';
-    totalSetsAll = exs.reduce((s,e)=>s+totalSetsOf(e), 0);
   } else {
     const ex = data.exercises.find(e=>e.id===arg.ex);
     if(!ex){ go('list'); return; }
-    plan = buildPlan(ex); exs = [ex]; title = ex.name;
-    totalSetsAll = totalSetsOf(ex);
+    const blk = { name: ex.name, ex, videos: ex.videos, equipment: ex.equipment,
+                  sub: planForExercise(ex), dots: totalSetsOf(ex) };
+    plan = blk.sub.slice();
+    plan.forEach(s => { s.blk = blk; s.exIdx = 0; });
+    if(plan.length) plan.unshift({kind:'prep', dur:5, blk, exIdx:0});
+    blocks = [blk]; title = ex.name;
   }
-  const isWo = exs.length > 1 || !!arg.wo;
+  const totalSetsAll = blocks.reduce((s,b)=>s+b.dots, 0);
+  const isWo = !!arg.wo;
   timer = { iv:null, step:0, remaining:plan[0]?plan[0].dur:0, endAt:null,
             running:false, done:plan.length===0 };
 
@@ -847,11 +1029,11 @@ function renderTimer(arg){
   let vrowFor = null;
   function drawHeader(c){
     $('tname').textContent = isWo
-      ? c.ex.name + ' \u00b7 ' + (c.exIdx+1) + '/' + exs.length
+      ? c.blk.name + ' \u00b7 ' + (c.exIdx+1) + '/' + blocks.length
       : title;
-    if(vrowFor !== c.ex.id){
-      vrowFor = c.ex.id;
-      const vs = (c.ex.videos||[]).filter(u=>u&&u.trim());
+    if(vrowFor !== c.blk){
+      vrowFor = c.blk;
+      const vs = (c.blk.videos||[]).filter(u=>u&&u.trim());
       $('vrow').innerHTML = vs.map((u,i)=>
         `<a class="vidlink" href="${esc(u)}" target="_blank" rel="noopener">\u25B6 Video ${i+1}</a>`).join('');
     }
@@ -861,7 +1043,7 @@ function renderTimer(arg){
     const c = cur();
     if(timer.done){
       $('tmain').innerHTML = `<div><div class="t-done">Done</div>
-        <div class="t-done-sub">${isWo ? exs.length+' exercises \u00b7 ' : ''}${totalSetsAll} sets complete. Nice work.</div></div>`;
+        <div class="t-done-sub">${isWo ? blocks.length+' blocks \u00b7 ' : ''}${totalSetsAll} sets complete. Nice work.</div></div>`;
       $('ctrls').innerHTML = `<div class="row">
         <button class="btn ghost grow" id="again">Run again</button>
         <button class="btn grow" id="finish">Finish</button></div>`;
@@ -873,31 +1055,33 @@ function renderTimer(arg){
     }
     drawHeader(c);
     $('phase').textContent = c.kind==='prep' ? 'Get ready'
-      : c.kind==='between' ? 'Next: ' + c.ex.name
+      : c.kind==='between' ? 'Next: ' + c.blk.name
       : c.kind==='rest' ? 'Rest'
+      : c.tStep ? c.stepName
       : c.isRun ? 'Sprint '+(c.setIndex+1)
-      : (c.isHeavy ? 'Heavy set '+(c.setIndex+1) : 'Light set '+(c.setIndex-c.ex.heavySets+1));
+      : (c.isHeavy ? 'Heavy set '+(c.setIndex+1) : 'Light set '+(c.setIndex-c.blk.ex.heavySets+1));
     $('phase').style.color = phaseColor();
     if(c.kind==='work'){
       const parts=[];
-      if(c.value) parts.push(c.value+' '+unitOf(c.ex));
-      if(c.reps) parts.push(c.reps+' reps');
+      if(!c.tStep && c.value) parts.push(c.value+' '+unitOf(c.blk.ex));
+      if(!c.tStep && c.reps) parts.push(c.reps+' reps');
+      if(c.tStep) parts.push('Step '+(c.setIndex+1)+' of '+c.blk.dots);
       $('pval').textContent = parts.join(' \u00d7 ');
-      $('equip').textContent = c.ex.equipment ? '\u2699 ' + c.ex.equipment : '';
+      $('equip').textContent = c.blk.equipment ? '\u2699 ' + c.blk.equipment : '';
     } else { $('pval').textContent = ''; $('equip').textContent =
-      (c.kind==='between' && c.ex.equipment) ? '\u2699 ' + c.ex.equipment : ''; }
+      (c.kind==='between' && c.blk.equipment) ? '\u2699 ' + c.blk.equipment : ''; }
     $('digits').textContent = fmt(timer.remaining);
     const ring=$('ring');
     ring.style.stroke = phaseColor();
     ring.setAttribute('stroke-dashoffset', CIRC*(1 - (c.dur>0 ? timer.remaining/c.dur : 0)));
     $('tscr').style.background = `radial-gradient(circle at 50% 30%, color-mix(in srgb, ${phaseColor()} 8%, transparent), var(--bg) 65%)`;
     const dots=$('dots'); dots.innerHTML='';
-    const dEx = c.ex, n = totalSetsOf(dEx);
+    const dEx = c.blk.ex, n = c.blk.dots;
     const si = (c.kind==='between' || c.kind==='prep') ? -1 : c.setIndex;
     for(let i=0;i<n;i++){
       const passed = si >= 0 && (i<si || (i===si && c.kind==='rest'));
       const active = i===si && c.kind==='work';
-      const col = (dEx.mode!=='run' && i<dEx.heavySets) ? 'var(--heavy)' : 'var(--light)';
+      const col = (dEx && dEx.mode!=='run' && i<dEx.heavySets) ? 'var(--heavy)' : 'var(--light)';
       const d=document.createElement('span');
       d.className='dot'+(active?' active':'');
       d.style.borderColor=col; d.style.background=(passed||active)?col:'transparent';

@@ -121,3 +121,16 @@ everything: get-ready -> exercise 1's sets -> "Next: ..." rest -> exercise
 on (e.g. "Squats - 2/5") and the video pills switch to the current
 exercise. An "Equipment (optional)" field was added to every exercise for
 non-weight gear (bands, kettlebells, bodyweight...).
+
+## Workouts v2 - block-based (version 12)
+A workout is now a sequence of BLOCKS of different kinds:
+- Exercise block: strength/run from your library (sets, reps, weights,
+  sprints, its timers, videos, equipment)
+- Timed session block: a named list of steps, each with its own timer and
+  optional rest between steps - for stretching, mobility, breathing
+- Video session: a timed session prefilled with one long step and a video
+  link - for following a yoga class etc.
+Build: + New workout -> + Add block -> choose the kind. Tap any block to
+edit it; reorder with arrows. The runner chains everything with your
+"rest between blocks" transition announcing what's next. Old workouts are
+migrated automatically (each exercise became an exercise block).
