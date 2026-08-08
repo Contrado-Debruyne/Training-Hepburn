@@ -158,7 +158,7 @@ const KEY = 'trainer.data';            // ← never change this key
 const SCHEMA_VERSION = 7;
 
 function migrate(d){
-  if (!d || typeof d !== 'object') return { schemaVersion: SCHEMA_VERSION, exercises: [] };
+  if (!d || typeof d !== 'object') d = { schemaVersion: SCHEMA_VERSION, exercises: [] };
   if (!d.schemaVersion){ d = { schemaVersion: 1, exercises: Array.isArray(d.exercises) ? d.exercises : (Array.isArray(d) ? d : []) }; }
   if (d.schemaVersion === 1){
     (d.exercises||[]).forEach(e => { if(!Array.isArray(e.setReps)) e.setReps = (e.setValues||[]).map(()=>''); });
@@ -193,6 +193,7 @@ function migrate(d){
     });
     d.schemaVersion = 7;
   }
+  if (!Array.isArray(d.exercises)) d.exercises = [];
   if (!Array.isArray(d.workouts)) d.workouts = [];
   (d.workouts||[]).forEach(w => { if(!Array.isArray(w.blocks)) w.blocks = []; });
   if (!d.settings) d.settings = { sound: true, volume: 0.8, halfway: true };
@@ -201,7 +202,7 @@ function migrate(d){
 }
 function loadData(){
   try { const raw = localStorage.getItem(KEY); if (raw) return migrate(JSON.parse(raw)); } catch(e){}
-  return { schemaVersion: SCHEMA_VERSION, exercises: [] };
+  return migrate(null);   /* fresh install: normalized the same way as loaded data */
 }
 function saveData(){ try { localStorage.setItem(KEY, JSON.stringify(data)); } catch(e){ console.error('save failed', e); } }
 
@@ -344,7 +345,7 @@ function renderList(){
     <div class="label" style="margin-bottom:10px">Exercises</div>
     <div id="cards"></div>
     <button class="backup-link" id="soundBtn">Sound settings</button>
-    <div style="text-align:center;color:var(--line);font-size:11px;margin-top:18px">app version 13</div>
+    <div style="text-align:center;color:var(--line);font-size:11px;margin-top:18px">app version 14</div>
     <button class="backup-link" id="backupBtn">Backup &amp; restore workouts</button>
   </div>
   <button class="fab" id="addBtn">+ Add exercise</button>`;
