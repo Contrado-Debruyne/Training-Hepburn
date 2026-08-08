@@ -134,3 +134,11 @@ Build: + New workout -> + Add block -> choose the kind. Tap any block to
 edit it; reorder with arrows. The runner chains everything with your
 "rest between blocks" transition announcing what's next. Old workouts are
 migrated automatically (each exercise became an exercise block).
+
+## Background sound fix (v15)
+Cues are now pre-rendered audio files played through media elements
+instead of live-synthesized tones. iOS suspends synthesized audio the
+moment you switch apps, which is why cues only fired on return; media
+playback continues in the background, so set changes now sound on time
+while you're in another app. First tap in the app "blesses" all cue
+sounds so they're allowed to auto-play later.
