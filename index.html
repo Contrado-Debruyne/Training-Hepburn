@@ -125,10 +125,35 @@ input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:24px;heigh
 <body>
 <div id="app"></div>
 <script>
+/* ════════ CRASH GUARD — a JS error must never leave a black screen ════ */
+window.addEventListener('error', function(e){
+  try{
+    if(document.getElementById('crash')) return;
+    var raw = ''; try{ raw = localStorage.getItem('trainer.data') || ''; }catch(x){}
+    var d = document.createElement('div');
+    d.id = 'crash';
+    d.style.cssText = 'padding:28px 20px;color:#EDEFF3;font-family:-apple-system,sans-serif';
+    d.innerHTML = '<h2 style="margin:0 0 8px">Something went wrong</h2>'
+      + '<p style="color:#8A93A3;font-size:14px">The app hit an error while starting. '
+      + 'Your workouts are safe — copy the backup below, then reload. '
+      + 'If it keeps happening, send this to the developer (Claude):</p>'
+      + '<pre style="white-space:pre-wrap;font-size:12px;color:#F4647A;background:#171C24;'
+      + 'border-radius:12px;padding:12px">' + (e.message||'unknown error')
+      + (e.filename?'\n'+e.filename+':'+e.lineno:'') + '</pre>'
+      + '<div style="font-size:12px;color:#8A93A3;margin:14px 0 6px">YOUR DATA BACKUP — copy to Notes:</div>'
+      + '<textarea style="width:100%;height:90px;background:#171C24;color:#EDEFF3;border:1px solid #2A3340;'
+      + 'border-radius:12px;padding:10px;font-size:11px">' + raw.replace(/</g,'&lt;') + '</textarea>'
+      + '<button onclick="location.reload()" style="width:100%;margin-top:14px;padding:14px;border:none;'
+      + 'border-radius:12px;background:#FF7A45;color:#14100C;font-weight:700;font-size:16px">Reload app</button>';
+    document.body.appendChild(d);
+  }catch(x){}
+});
+
 /* ════════ DATA — versioned so future updates never lose workouts ════════
    The storage key never changes. Every saved blob carries a schemaVersion.
    When a future app version needs a new shape, add a step to migrate():
    data is upgraded in place, never discarded.                            */
+function uid(){ return Math.random().toString(36).slice(2,10); }
 const KEY = 'trainer.data';            // ← never change this key
 const SCHEMA_VERSION = 7;
 
@@ -181,7 +206,7 @@ function loadData(){
 function saveData(){ try { localStorage.setItem(KEY, JSON.stringify(data)); } catch(e){ console.error('save failed', e); } }
 
 let data = loadData();
-const uid = () => Math.random().toString(36).slice(2,10);
+
 const blank = () => ({ id: uid(), name:'', description:'', mode:'weights',
   heavySets:3, lightSets:2, sprints:4, distanceUnit:'km',
   setValues:['','','','',''], setReps:['','','','',''],
@@ -319,7 +344,7 @@ function renderList(){
     <div class="label" style="margin-bottom:10px">Exercises</div>
     <div id="cards"></div>
     <button class="backup-link" id="soundBtn">Sound settings</button>
-    <div style="text-align:center;color:var(--line);font-size:11px;margin-top:18px">app version 12</div>
+    <div style="text-align:center;color:var(--line);font-size:11px;margin-top:18px">app version 13</div>
     <button class="backup-link" id="backupBtn">Backup &amp; restore workouts</button>
   </div>
   <button class="fab" id="addBtn">+ Add exercise</button>`;
