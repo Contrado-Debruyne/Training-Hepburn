@@ -142,3 +142,12 @@ moment you switch apps, which is why cues only fired on return; media
 playback continues in the background, so set changes now sound on time
 while you're in another app. First tap in the app "blesses" all cue
 sounds so they're allowed to auto-play later.
+
+## Audio mixing (v16)
+On iOS 17+ the app declares its audio session 'ambient': cues MIX with
+other apps' sound (music, YouTube) instead of the two interrupting each
+other. Plus automatic recovery: if something still seizes the session
+(a call, Siri, older iOS), the app re-claims audio every 2 seconds and
+the moment it returns to the foreground.
+TRADE-OFF: in mixing mode iOS respects the ring/silent switch again -
+keep the switch on RING during workouts.
